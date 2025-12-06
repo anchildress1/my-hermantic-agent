@@ -1,0 +1,23 @@
+[project]
+name = "ollama-test"
+version = "0.1.0"
+description = "Ollama model template explorer with CLI chat interface"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ollama>=0.4.0",
+    "pyyaml>=6.0.1",
+    "psycopg2-binary>=2.9.9",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-mock>=3.12.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = "."
+testpaths = ["tests"]

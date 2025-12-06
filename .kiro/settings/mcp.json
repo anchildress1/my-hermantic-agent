@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "tiger": {
+      "command": "/bin/sh",
+      "args": [
+        "-c",
+        "exec $HOME/.local/bin/tiger mcp start"
+      ],
+      "disabled": false,
+      "autoApprove": [
+        "service_list",
+        "service_create",
+        "service_get",
+        "db_execute_query"
+      ]
+    }
+  }
+}
