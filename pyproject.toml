@@ -1,7 +1,7 @@
 [project]
-name = "ollama-test"
+name = "my-hermetic-agent"
 version = "0.1.0"
-description = "Ollama model template explorer with CLI chat interface"
+description = "🚧 WIP—Tinkering with embeddings, agent orchestration patterns, local LLM behavior, and instruction-layer experimentation. Expect breakthroughs, breakages, and the occasional accidental summon."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -16,6 +16,7 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
     "pytest-mock>=3.12.0",
+    "pytest-cov>=4.1.0",
 ]
 
 [tool.pytest.ini_options]

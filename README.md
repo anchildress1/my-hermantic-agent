@@ -1,172 +1,281 @@
-# Ollama Agent
+# My Hermantic Agent
 
-A CLI agent for exploring Ollama model templates with persistent memory storage.
+> [!INFO]
+>
+> 🦄 I picked Hermes because he’s a hybrid reasoning model who can actually think, use tools, and throw shade right back when I deserve it. Most models crumble when I push them; Hermes leans in. So this repo is my no-plan, see-what-happens agent playground. Under the hood it’s a CLI-based conversational system built on NousResearch's Hermes-4-14B hosted locally with Ollama. I've started with persistent semantic memory backed by Tiger's TimescaleDB and OpenAI embeddings. It runs a dual-memory setup for short-term chat context and long-term recall, manages its own state without whining, and communicates the same way I do: direct, no BS. I’m basically giving a capable model a sandbox and too much freedom, and seeing what grows teeth. 🧛‍♂️
+
+---
+
+## Quick Start
+
+```bash
+# Install dependencies
+make install
+
+# Setup environment
+make setup
+# Edit .env with your OPENAI_API_KEY
+
+# Initialize database (optional, for semantic memory)
+make setup-db
+
+# Start chatting
+make run
+```
+
+**Full setup guide:** [QUICKSTART.md](QUICKSTART.md)
+
+---
+
+## Features
+
+- 🤖 **Local LLM** - Runs Ollama models locally, no cloud dependency
+- 💾 **Dual Memory** - Short-term conversation history + long-term semantic memory
+- 🔍 **Semantic Search** - Find relevant memories by meaning, not just keywords
+- 🎯 **Smart Context** - Auto-trims conversations to stay within token limits
+- 📝 **Persistent** - Conversations auto-save and resume where you left off
+- ⚡ **Fast** - Connection pooling, embedding caching, optimized queries
+- 🛡️ **Robust** - Comprehensive error handling, atomic file writes, graceful degradation
+
+---
+
+## Architecture
+
+```mermaid
+%%{init: {'theme':'base'}}%%
+graph TB
+    CLI[CLI Interface] --> Chat[Chat Manager]
+    Chat --> Ollama[Ollama LLM]
+    Chat --> Memory[Memory Store]
+    Chat --> JSON[Conversation JSON]
+    Memory --> OpenAI[OpenAI Embeddings]
+    Memory --> TimescaleDB[(TimescaleDB + pgvector)]
+    
+    style CLI fill:#4A90E2
+    style Ollama fill:#FF6B6B
+    style OpenAI fill:#4ECDC4
+    style TimescaleDB fill:#95E1D3
+```
+
+**Detailed diagrams:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
+---
+
+## Documentation
+
+- 📖 **[User Guide](docs/USER_GUIDE.md)** - How to use the agent effectively
+- 🏗️ **[Architecture](docs/ARCHITECTURE.md)** - System design and data flow
+- 🎛️ **[Model Parameters](docs/MODEL_PARAMETERS.md)** - Hermes-4 configuration guide
+- 🔧 **[Memory API](docs/MEMORY_API.md)** - Semantic memory reference
+- 🚀 **[Quick Start](QUICKSTART.md)** - 5-minute setup guide
+
+---
+
+## Usage
+
+### Basic Chat
+
+```bash
+make run
+```
+
+```bash
+💬 You: What's the capital of France?
+🤖 Assistant: Paris.
+
+💬 You: quit
+💾 Memory saved to data/memory.json
+Goodbye!
+```
+
+### Memory Commands
+
+```bash
+# Store a memory
+/remember I prefer Python over JavaScript
+Type: preference
+Context: coding
+✓ Memory stored with ID 1
+
+# Search memories
+/recall programming preferences
+🔍 Found 1 relevant memories:
+  [1] PREFERENCE | coding
+      I prefer Python over JavaScript
+      Similarity: 0.923
+
+# View statistics
+/stats
+📊 Total memories: 42 | Contexts: 3 | Types: 4
+```
+
+**Full command reference:** [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
+
+---
+
+## Requirements
+
+- **Python 3.12+**
+- **Hugging Face** - Any model with Ollama support ([huggingface.com](https://huggingface.co/))
+- **Ollama** - Local LLM runtime ([ollama.ai](https://ollama.ai))
+- **OpenAI API Key** - For embeddings ([platform.openai.com](https://platform.openai.com/api-keys))
+- **TimescaleDB** - Optional, for semantic memory ([timescale.cloud](https://console.timescale.cloud))
+
+---
+
+## Installation
+
+### 1. Install Dependencies
+
+```bash
+make install
+```
+
+### 2. Configure Environment
+
+```bash
+cp .env.example .env
+# Edit .env and add:
+# - OPENAI_API_KEY (required)
+# - MEMORY_DB_URL (optional, for semantic memory)
+```
+
+### 3. Setup Ollama
+
+> [!WARN] **This Is Hermes, Not a Hall Monitor**
+> 
+> ⚠️ Hermes ships without the usual corporate-grade guardrails, seatbelts, bumpers, or soft edges. He’s a hybrid reasoning model with tool access and an attitude, and he will absolutely follow your instructions even when you probably shouldn’t have written them. Before you grab this code and run, go read the docs on what Hermes actually is and what he is not. If you treat him like a safe, shrink-wrapped assistant, that’s on you. This project is an experiment, not a babysitter.
+
+```bash
+# Pull the Hermes-4 model
+ollama pull hf.co/DevQuasar/NousResearch.Hermes-4-14B-GGUF:Q8_0
+
+# Start Ollama service
+ollama serve
+```
+
+### 4. Initialize Database (Optional)
+
+```bash
+make setup-db
+```
+
+---
 
 ## Project Structure
 
 ```plaintext
-ollama-test/
-├── config/              # Configuration files
-│   └── template.yaml    # Model template and parameters
-├── src/
-│   └── agent/
-│       ├── chat.py      # Chat interface and conversation management
-│       └── memory.py    # Persistent memory with semantic search
-├── tests/               # Test scripts
-├── data/                # Local conversation history (gitignored)
-├── logs/                # Application logs (gitignored)
-├── main.py              # Entry point
-└── .env                 # Environment variables (gitignored)
+hermes-agent/
+├── config/
+│   └── template.yaml      # Model configuration
+├── src/agent/
+│   ├── chat.py            # Chat interface
+│   └── memory.py          # Semantic memory
+├── docs/                  # Documentation
+├── schema/                # Database schema
+├── tests/                 # Unit tests
+├── main.py                # Entry point
+└── .env                   # Environment variables
 ```
 
-## Setup
+---
 
-1. Install dependencies:
+## Configuration
 
-```bash
-uv sync
-```
-
-1. Create `.env` file:
-
-```bash
-cp .env.example .env
-# Add your OPENAI_API_KEY
-```
-
-1. Make sure Ollama is running and pull a model:
-
-```bash
-ollama pull hermes3:14b
-```
-
-## Usage
-
-Run the chat interface:
-
-```bash
-uv run python main.py
-```
-
-### Chat Commands
-
-- `quit` or `exit` - End conversation and save
-- `/context` - Show full conversation context with token counts
-- `/context brief` - Show brief context summary
-- `/clear` - Clear conversation history (keeps system prompt)
-- `/save` - Manually save current conversation
-- `/load` - Reload from saved memory
-- `/stream` - Toggle streaming mode
-- `/trim` - Manually trim old messages
-
-### Memory Features
-
-- Conversations auto-save to `data/memory.json`
-- Auto-loads on startup - continues where you left off
-- Smart context trimming when approaching token limits
-- Repetition detection with logging
-
-## Memory Store
-
-The agent uses TimescaleDB for persistent semantic memory:
-
-- **Distilled memories** - Stores key facts, not full conversations
-- **Semantic search** - Find relevant memories by meaning
-- **Context filtering** - Organize by project, work, personal, etc.
-- **Type filtering** - preference, fact, task, insight
-
-### Test Memory Store
-
-```bash
-uv run python tests/test_memory.py
-```
-
-## Template Configuration
+### Model Settings
 
 Edit `config/template.yaml` to customize:
 
-- **model**: Which Ollama model to use
-- **system**: System prompt that sets the assistant's behavior
-- **parameters**: Model parameters (see below)
+```yaml
+model: hf.co/DevQuasar/NousResearch.Hermes-4-14B-GGUF:Q8_0
+system: |
+  You are Hermes, a personal assistant...
+parameters:
+  temperature: 0.85
+  num_ctx: 8192
+  # ... more parameters
+```
 
-## Parameters
+**Parameter guide:** [docs/MODEL_PARAMETERS.md](docs/MODEL_PARAMETERS.md)
 
-### temperature: 0.8
+### Environment Variables
 
-- Controls randomness/creativity (0.0 to 2.0)
-- Lower = more focused and deterministic
-- Higher = more creative and unpredictable
-- 0.8 balances creativity with coherence for assistant tasks
+```bash
+# Required
+OPENAI_API_KEY=sk-...
 
-### top_p: 0.95
+# Optional
+MEMORY_DB_URL=postgresql://...
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+OPENAI_EMBEDDING_DIM=1536
+```
 
-- Nucleus sampling - considers tokens until their cumulative probability hits this threshold
-- 0.95 means it samples from the top 95% most likely next tokens
-- Higher = more variety in word choice
-- Works with temperature to control creativity
+---
 
-### top_k: 40
+## Development
 
-- Limits sampling to the top K most likely tokens
-- 40 means it only considers the 40 most probable next words
-- Prevents completely random/nonsensical outputs
-- Balances variety with coherence
+```bash
+# Run tests
+make test
 
-### num_predict: 4096
+# View logs
+make logs
 
-- Maximum tokens the model will generate in one response
-- 4096 is good for most responses
-- One token ≈ 0.75 words, so ~3000 words max
+# Clean artifacts
+make clean
 
-### repeat_penalty: 1.18
+# See all commands
+make help
+```
 
-- Penalizes the model for repeating the same words/phrases
-- 1.0 = no penalty, higher = stronger penalty
-- 1.18 prevents annoying repetition without making it sound unnatural
+---
 
-### repeat_last_n: 256
+## Memory System
 
-- Look back N tokens for repetition detection
-- 256 means it checks the last ~200 words for repeated patterns
-- Prevents getting stuck in loops
+### Dual-Memory Architecture
 
-### presence_penalty: 0.5
+1. **Short-term** - Full conversation history in `data/memory.json`
+   - Auto-saves on exit
+   - Auto-loads on startup
+   - Smart context trimming
 
-- Penalizes tokens that have appeared anywhere in the conversation
-- Encourages using diverse vocabulary
-- 0.5 is moderate - keeps responses fresh without being forced
+2. **Long-term** - Semantic memories in TimescaleDB
+   - Vector embeddings for similarity search
+   - Organized by type and context
+   - Persistent across conversations
 
-### frequency_penalty: 0.5
+### Memory Types
 
-- Penalizes tokens based on how often they've appeared
-- Stronger penalty for frequently used words
-- 0.5 reduces repetitive phrasing
+- **preference** - User likes/dislikes
+- **fact** - Factual information
+- **task** - Todos and action items
+- **insight** - Observations and patterns
 
-### mirostat: 2
+---
 
-- Adaptive sampling mode (0=off, 1/2=on)
-- Mode 2 dynamically adjusts sampling to maintain consistent quality
-- Prevents the model from getting too repetitive or too random
-- Best for longer conversations
+## Tech Stack
 
-### mirostat_tau: 8.0
+<div align="center">
 
-- Target perplexity for mirostat - controls how predictable vs surprising the output is
-- **Low (3.0-4.0)**: More predictable, safer responses, conventional phrasing
-- **Moderate (5.0-6.0)**: Natural conversation, balanced and human-like
-- **High (7.0-9.0)**: More creative and varied, takes conversational risks
-- **Very High (10.0+)**: Unpredictable, experimental, can get weird
-- 8.0 encourages more colorful and varied language for personality
+![Python](https://img.shields.io/badge/python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white) ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white) ![TimescaleDB](https://img.shields.io/badge/TimescaleDB-FDB515?style=for-the-badge&logo=timescale&logoColor=black) 
 
-### mirostat_eta: 0.1
+![Hermes](https://img.shields.io/badge/Hermes-14B%20Hybrid%20Reasoner-0B3D91?style=for-the-badge&logo=lightning&logoColor=white) ![Hugging Face Badge](https://img.shields.io/badge/🤗_Hugging_Face-FFD21E?style=for-the-badge) ![Ollama](https://img.shields.io/badge/Ollama-000000?style=for-the-badge&logo=ollama&logoColor=white) ![OpenAI](https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white)
 
-- Learning rate for mirostat adjustments
-- How quickly mirostat adapts to maintain target perplexity
-- 0.1 is a moderate adjustment speed
+![Kiro](https://img.shields.io/badge/Built_with-Kiro-7C3AED?style=for-the-badge)
+![Verdant](https://img.shields.io/badge/Powered_by-Verdant-00D486?style=for-the-badge)
+![ChatGPT](https://img.shields.io/badge/Assisted_by-ChatGPT-74AA9C?style=for-the-badge&logo=openai&logoColor=white)
 
-## Requirements
+</div>
 
-- Python 3.12+
-- Ollama running locally (install from <https://ollama.ai>)
-- OpenAI API key (for memory embeddings)
-- TimescaleDB instance (provided via Tiger Cloud)
+- **Runtime**: Python 3.12+ with [uv package manager](https://docs.astral.sh/uv/)
+- **Model**: [NousResearch/Hermes-4-14B](https://huggingface.co/NousResearch/Hermes-4-14B)  
+- **Ollama**: [ollama.ai](https://ollama.ai)  
+- **TigerData Agentic Postgres**: [tigerdata.com](https://www.tigerdata.com)
+- **Embeddings**: OpenAI API (text-embedding-3-small)
+- **Storage**: JSON for conversations, PostgreSQL for semantic memory
+
+---
+
+## License
+
+This project is released under the [Polyform Shield License 1.0.0](https://polyformproject.org/licenses/shield/1.0.0/). In plain language: use it, study it, fork it, remix it, build weird things with it — just don’t make money from it or wrap it into anything commercial without getting my permission first. No loopholes, no “but technically,” no marketplace shenanigans. The full legal text lives in the [LICENSE](LICENSE) file if you need the exact wording. 📜🛡️

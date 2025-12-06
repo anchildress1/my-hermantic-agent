@@ -1,41 +1,47 @@
-.PHONY: help install setup run test coverage logs clean
+.PHONY: help install setup setup-db run test coverage logs clean
 
 help:
 	@echo "Ollama Agent - Available Commands:"
 	@echo ""
-	@echo "  make install    - Install dependencies with uv"
-	@echo "  make setup      - Setup environment (.env file)"
-	@echo "  make run        - Start the chat interface"
-	@echo "  make test       - Run tests with pytest"
-	@echo "  make coverage   - Run tests with coverage report"
-	@echo "  make logs       - Tail application logs"
-	@echo "  make clean      - Clean generated files and logs"
+	@echo "  make install         - Install dependencies with uv"
+	@echo "  make setup           - Setup environment (.env file)"
+	@echo "  make setup-db        - Initialize TimescaleDB schema"
+	@echo "  make run             - Start the chat interface"
+	@echo "  make test            - Run tests"
+	@echo "  make coverage        - Run tests with coverage report"
+	@echo "  make logs            - Tail application logs"
+	@echo "  make clean           - Clean generated files and logs"
 
 install:
-	uv sync
+	uv sync --all-extras
 
 setup:
 	@if [ ! -f .env ]; then \
 		cp .env.example .env; \
-		echo "✓ Created .env file - please add your OPENAI_API_KEY"; \
+		echo "✓ Created .env file - please add your OPENAI_API_KEY and MEMORY_DB_URL"; \
 	else \
 		echo "✓ .env file already exists"; \
 	fi
+
+setup-db:
+	@echo "Initializing TimescaleDB schema..."
+	uv run python scripts/setup_db.py
 
 run:
 	uv run python main.py
 
 test:
-	uv run --with pytest pytest tests/ -v
+	uv run pytest tests/ -v
 
 coverage:
-	uv run --with pytest --with pytest-cov pytest tests/ --cov=src --cov-report=term-missing
+	uv run pytest tests/ --cov=src --cov-report=term-missing --cov-report=html
 
 logs:
 	tail -f logs/ollama_chat.log
 
 clean:
 	rm -rf logs/*.log
-	rm -rf data/memory.json
+	rm -rf data/memory.json data/memory.json.bak
 	rm -rf .coverage .pytest_cache htmlcov
+	rm -rf src/__pycache__ src/agent/__pycache__ tests/__pycache__ tests/integration/__pycache__
 	@echo "✓ Cleaned logs, memory files, and test artifacts"

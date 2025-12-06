@@ -4,7 +4,7 @@ inclusion: always
 
 # Product Overview
 
-Ollama Agent is a CLI-based conversational agent that explores Ollama model templates with persistent memory capabilities.
+Hermes Agent is a CLI-based conversational agent powered by Ollama's Hermes-4-14B model with persistent semantic memory capabilities.
 
 ## Core Features
 

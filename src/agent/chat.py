@@ -2,52 +2,122 @@ import yaml
 import ollama
 import json
 import logging
+import tempfile
+import shutil
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Tuple
+
+# Setup module logger
+logger = logging.getLogger(__name__)
 
 
 def setup_logging():
-    """Setup logging for repetition detection."""
+    """Setup logging with proper configuration."""
+    log_dir = Path('logs')
+    log_dir.mkdir(exist_ok=True)
+    
     logging.basicConfig(
-        filename='logs/ollama_chat.log',
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler('logs/ollama_chat.log'),
+            logging.StreamHandler()  # Also log to console for errors
+        ]
     )
+    # Set console handler to WARNING and above only
+    logging.getLogger().handlers[1].setLevel(logging.WARNING)
+    logger.info("Logging initialized")
 
 
-def load_template(template_path: str = "config/template.yaml") -> dict:
+def load_template(template_path: str = "config/template.yaml") -> Dict:
     """Load model template configuration from YAML file."""
-    with open(template_path, "r") as f:
-        return yaml.safe_load(f)
+    try:
+        with open(template_path, "r") as f:
+            template = yaml.safe_load(f)
+            logger.info(f"Loaded template from {template_path}")
+            return template
+    except FileNotFoundError:
+        logger.error(f"Template file not found: {template_path}")
+        raise
+    except yaml.YAMLError as e:
+        logger.error(f"Invalid YAML in template: {e}")
+        raise
 
 
-def save_memory(messages: list, memory_file: str = "data/memory.json"):
-    """Save conversation history to file."""
+def save_memory(messages: List[Dict], memory_file: str = "data/memory.json"):
+    """Save conversation history to file with atomic write."""
     memory_path = Path(memory_file)
     memory_path.parent.mkdir(parents=True, exist_ok=True)
+    
     data = {
         "timestamp": datetime.now().isoformat(),
         "messages": messages
     }
-    with open(memory_path, "w") as f:
-        json.dump(data, f, indent=2)
-    print(f"💾 Memory saved to {memory_file}")
+    
+    try:
+        # Write to temp file first
+        with tempfile.NamedTemporaryFile(
+            mode='w', 
+            dir=memory_path.parent, 
+            delete=False,
+            suffix='.tmp'
+        ) as tmp:
+            json.dump(data, tmp, indent=2)
+            tmp_path = tmp.name
+        
+        # Backup existing file
+        if memory_path.exists():
+            backup = memory_path.with_suffix('.json.bak')
+            shutil.copy2(memory_path, backup)
+            logger.debug(f"Backed up to {backup}")
+        
+        # Atomic rename
+        shutil.move(tmp_path, memory_path)
+        logger.info(f"Saved {len(messages)} messages to {memory_file}")
+        print(f"💾 Memory saved to {memory_file}")
+        
+    except Exception as e:
+        logger.error(f"Failed to save memory: {e}")
+        if 'tmp_path' in locals():
+            Path(tmp_path).unlink(missing_ok=True)
+        raise
 
 
-def load_memory(memory_file: str = "data/memory.json") -> list:
+def load_memory(memory_file: str = "data/memory.json") -> List[Dict]:
     """Load conversation history from file."""
     memory_path = Path(memory_file)
     if not memory_path.exists():
+        logger.info(f"No existing memory file at {memory_file}")
         return []
     
-    with open(memory_path, "r") as f:
-        data = json.load(f)
-    
-    messages = data.get("messages", [])
-    timestamp = data.get("timestamp", "unknown")
-    print(f"📂 Loaded memory from {timestamp}")
-    return messages
+    try:
+        with open(memory_path, "r") as f:
+            data = json.load(f)
+        
+        messages = data.get("messages", [])
+        timestamp = data.get("timestamp", "unknown")
+        logger.info(f"Loaded {len(messages)} messages from {timestamp}")
+        print(f"📂 Loaded memory from {timestamp}")
+        return messages
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Corrupted memory file: {e}")
+        # Try to load backup
+        backup = memory_path.with_suffix('.json.bak')
+        if backup.exists():
+            logger.info("Attempting to load from backup")
+            print("⚠️  Memory file corrupted, loading from backup...")
+            with open(backup, "r") as f:
+                data = json.load(f)
+            return data.get("messages", [])
+        else:
+            logger.error("No backup available")
+            print("❌ Memory file corrupted and no backup available")
+            return []
+    except Exception as e:
+        logger.error(f"Failed to load memory: {e}")
+        return []
 
 
 def estimate_tokens(text: str) -> int:
@@ -63,7 +133,7 @@ def count_message_tokens(messages: list) -> int:
     return total
 
 
-def trim_context(messages: list, max_tokens: int = 6000, keep_recent: int = 10) -> tuple[list, bool]:
+def trim_context(messages: List[Dict], max_tokens: int = 6000, keep_recent: int = 10) -> Tuple[List[Dict], bool]:
     """
     Trim old messages if context is too large.
     Always keeps system message and most recent messages.
@@ -102,12 +172,12 @@ def trim_context(messages: list, max_tokens: int = 6000, keep_recent: int = 10) 
     
     trimmed.extend(recent_messages)
     
-    logging.info(f"Context trimmed: {len(messages)} -> {len(trimmed)} messages, {total_tokens} -> {kept_tokens} tokens")
+    logger.info(f"Context trimmed: {len(messages)} -> {len(trimmed)} messages, {total_tokens} -> {kept_tokens} tokens")
     
     return trimmed, True
 
 
-def print_context(messages: list, show_full: bool = False):
+def print_context(messages: List[Dict], show_full: bool = False):
     """Print current conversation context."""
     print("\n" + "=" * 60)
     print("📋 CURRENT CONTEXT")
@@ -126,11 +196,53 @@ def print_context(messages: list, show_full: bool = False):
     print("=" * 60 + "\n")
 
 
-def chat_loop(template: dict, memory_file: str = "data/memory.json"):
+def check_ollama_connection(model: str) -> bool:
+    """Verify Ollama is running and model is available."""
+    try:
+        model_list = ollama.list()
+        available_models = [m['name'] for m in model_list.get('models', [])]
+        
+        # Check for exact match or partial match (model might have :tag)
+        model_found = any(model in m or m in model for m in available_models)
+        
+        if not model_found:
+            logger.error(f"Model '{model}' not found. Available: {available_models}")
+            print(f"❌ Model '{model}' not found")
+            print(f"   Available models: {', '.join(available_models)}")
+            print(f"   Run: ollama pull {model}")
+            return False
+        
+        logger.info(f"Ollama connection verified, model '{model}' available")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Ollama service not running: {e}")
+        print(f"❌ Ollama service not running: {e}")
+        print("   Start it with: ollama serve")
+        return False
+
+
+def chat_loop(template: Dict, memory_file: str = "data/memory.json"):
     """Run interactive chat loop with Ollama."""
     model = template.get('model', 'llama3.2')
     system_prompt = template.get('system', '')
     params = template.get('parameters', {})
+    
+    # Validate Ollama connection
+    if not check_ollama_connection(model):
+        return
+    
+    # Initialize semantic memory store
+    memory_store = None
+    try:
+        from src.agent.memory import MemoryStore
+        memory_store = MemoryStore()
+        logger.info("Semantic memory store initialized")
+        print("✓ Semantic memory connected")
+    except Exception as e:
+        logger.warning(f"Semantic memory unavailable: {e}")
+        print(f"⚠️  Semantic memory unavailable: {e}")
+        print("   Continuing without semantic memory...")
     
     # Get context window size from params, default to 8192
     max_context = params.get('num_ctx', 8192)
@@ -152,7 +264,7 @@ def chat_loop(template: dict, memory_file: str = "data/memory.json"):
     print(f"🤖 Ollama Chat (Model: {model})")
     print(f"📊 Context window: {max_context} tokens (keeping {max_history_tokens} for history)")
     print(f"📊 Parameters: {json.dumps(params, indent=2)}")
-    print("\nCommands:")
+    print("\nConversation Commands:")
     print("  'quit' or 'exit' - End conversation and save")
     print("  '/context' - Show full conversation context with token counts")
     print("  '/context brief' - Show brief context summary")
@@ -160,7 +272,17 @@ def chat_loop(template: dict, memory_file: str = "data/memory.json"):
     print("  '/save' - Manually save current conversation")
     print("  '/load' - Reload from saved memory")
     print("  '/stream' - Toggle streaming mode")
-    print("  '/trim' - Manually trim old messages\n")
+    print("  '/trim' - Manually trim old messages")
+    
+    if memory_store:
+        print("\nMemory Commands:")
+        print("  '/remember <text>' - Store a memory manually")
+        print("  '/recall <query>' - Search semantic memories")
+        print("  '/memories [context]' - List recent memories")
+        print("  '/forget <id>' - Delete a memory by ID")
+        print("  '/contexts' - List all memory contexts")
+        print("  '/stats' - Show memory statistics")
+    print()
     
     streaming = True
     
@@ -212,6 +334,140 @@ def chat_loop(template: dict, memory_file: str = "data/memory.json"):
                 else:
                     print(f"✓ Context is within limits ({count_message_tokens(messages)} tokens)")
                 continue
+            
+            # Memory commands
+            if memory_store:
+                if user_input.startswith('/remember '):
+                    text = user_input[10:].strip()
+                    if not text:
+                        print("Usage: /remember <text>")
+                        continue
+                    
+                    # Prompt for type and context
+                    print("\nMemory type (preference/fact/task/insight):")
+                    mem_type = input("  Type: ").strip().lower()
+                    if mem_type not in memory_store.VALID_TYPES:
+                        print(f"❌ Invalid type. Must be one of: {memory_store.VALID_TYPES}")
+                        continue
+                    
+                    print("\nContext (e.g., work, personal, project-name):")
+                    context = input("  Context: ").strip()
+                    if not context:
+                        print("❌ Context cannot be empty")
+                        continue
+                    
+                    try:
+                        mem_id = memory_store.remember(text, mem_type, context)
+                        if mem_id:
+                            print(f"✓ Memory stored with ID {mem_id}")
+                        else:
+                            print("❌ Failed to store memory")
+                    except Exception as e:
+                        print(f"❌ Error: {e}")
+                    continue
+                
+                if user_input.startswith('/recall '):
+                    query = user_input[8:].strip()
+                    if not query:
+                        print("Usage: /recall <query>")
+                        continue
+                    
+                    try:
+                        results = memory_store.recall(query, limit=5)
+                        if results:
+                            print(f"\n🔍 Found {len(results)} relevant memories:\n")
+                            for r in results:
+                                print(f"  [{r['id']}] {r['type'].upper()} | {r['context']}")
+                                print(f"      {r['memory_text']}")
+                                print(f"      Similarity: {r['similarity']:.3f} | Accessed: {r['access_count']} times")
+                                print()
+                        else:
+                            print("No memories found")
+                    except Exception as e:
+                        print(f"❌ Error: {e}")
+                    continue
+                
+                if user_input.startswith('/memories'):
+                    parts = user_input.split(maxsplit=1)
+                    context_filter = parts[1] if len(parts) > 1 else None
+                    
+                    try:
+                        results = memory_store.recall(
+                            query="",
+                            context=context_filter,
+                            limit=10,
+                            use_semantic=False
+                        ) if context_filter else []
+                        
+                        # If no filter, get recent memories via stats
+                        if not context_filter:
+                            # Just show stats instead
+                            stats = memory_store.stats()
+                            if stats:
+                                print(f"\n📊 Memory Statistics:")
+                                print(f"  Total memories: {stats['total_memories']}")
+                                print(f"  Unique types: {stats['unique_types']}")
+                                print(f"  Unique contexts: {stats['unique_contexts']}")
+                                print(f"  Avg confidence: {stats['avg_confidence']:.2f}")
+                                print(f"  Last memory: {stats['last_memory_at']}")
+                            else:
+                                print("No memories stored yet")
+                        else:
+                            if results:
+                                print(f"\n📋 Memories in context '{context_filter}':\n")
+                                for r in results:
+                                    print(f"  [{r['id']}] {r['type'].upper()}")
+                                    print(f"      {r['memory_text'][:80]}...")
+                                    print()
+                            else:
+                                print(f"No memories found in context '{context_filter}'")
+                    except Exception as e:
+                        print(f"❌ Error: {e}")
+                    continue
+                
+                if user_input.startswith('/forget '):
+                    try:
+                        mem_id = int(user_input[8:].strip())
+                        if memory_store.forget(mem_id):
+                            print(f"✓ Memory {mem_id} deleted")
+                        else:
+                            print(f"❌ Memory {mem_id} not found")
+                    except ValueError:
+                        print("Usage: /forget <id>")
+                    except Exception as e:
+                        print(f"❌ Error: {e}")
+                    continue
+                
+                if user_input == '/contexts':
+                    try:
+                        contexts = memory_store.list_contexts()
+                        if contexts:
+                            print(f"\n📁 Available contexts ({len(contexts)}):")
+                            for ctx in contexts:
+                                print(f"  - {ctx}")
+                            print()
+                        else:
+                            print("No contexts found")
+                    except Exception as e:
+                        print(f"❌ Error: {e}")
+                    continue
+                
+                if user_input == '/stats':
+                    try:
+                        stats = memory_store.stats()
+                        if stats:
+                            print(f"\n📊 Memory Statistics:")
+                            print(f"  Total memories: {stats['total_memories']}")
+                            print(f"  Unique types: {stats['unique_types']}")
+                            print(f"  Unique contexts: {stats['unique_contexts']}")
+                            print(f"  Avg confidence: {stats['avg_confidence']:.2f}")
+                            print(f"  Last memory: {stats['last_memory_at']}")
+                            print()
+                        else:
+                            print("Failed to retrieve stats")
+                    except Exception as e:
+                        print(f"❌ Error: {e}")
+                    continue
             
             if not user_input:
                 continue
@@ -265,7 +521,7 @@ def chat_loop(template: dict, memory_file: str = "data/memory.json"):
                 # Show warnings if any repetition detected
                 if repetition_warnings:
                     print(f"\n⚠️  Repetition detected: {len(repetition_warnings)} instance(s) - check logs/ollama_chat.log")
-                    logging.info(f"Full response with repetition:\n{full_response}\n")
+                    logger.info(f"Full response with repetition:\n{full_response}\n")
                 
                 messages.append({'role': 'assistant', 'content': full_response})
             else:
@@ -277,6 +533,7 @@ def chat_loop(template: dict, memory_file: str = "data/memory.json"):
                 assistant_message = response['message']['content']
                 messages.append({'role': 'assistant', 'content': assistant_message})
                 print(assistant_message)
+                logger.debug(f"Assistant response: {len(assistant_message)} chars")
             
             # Show token count and context status
             current_tokens = count_message_tokens(messages)
@@ -289,7 +546,10 @@ def chat_loop(template: dict, memory_file: str = "data/memory.json"):
         except KeyboardInterrupt:
             print("\n\nSaving before exit...")
             save_memory(messages, memory_file)
+            if memory_store:
+                memory_store.close()
             print("Goodbye!")
             break
         except Exception as e:
+            logger.error(f"Error in chat loop: {e}", exc_info=True)
             print(f"\n❌ Error: {e}\n")

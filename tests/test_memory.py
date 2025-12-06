@@ -32,8 +32,12 @@ def mock_openai():
 @pytest.fixture
 def store(mock_openai):
     """Create a memory store instance with mocked dependencies."""
-    with patch.dict('os.environ', {'OPENAI_API_KEY': 'test-key'}):
-        return MemoryStore()
+    with patch.dict('os.environ', {
+        'OPENAI_API_KEY': 'test-key',
+        'MEMORY_DB_URL': 'postgresql://test:test@localhost/test'
+    }):
+        with patch('src.agent.memory.pool.SimpleConnectionPool'):
+            return MemoryStore()
 
 
 def test_remember(store, mock_db_connection, mock_openai):

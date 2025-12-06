@@ -7,7 +7,7 @@ inclusion: always
 ## Directory Layout
 
 ```plaintext
-ollama-test/
+hermes-agent/
 ├── config/              # Configuration files
 │   └── template.yaml    # Model template and parameters
 ├── src/
