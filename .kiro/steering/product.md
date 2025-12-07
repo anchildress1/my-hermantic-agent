@@ -20,11 +20,12 @@ Hermes Agent is a CLI-based conversational agent powered by Ollama's Hermes-4-14
 The agent uses a dual-memory approach:
 
 1. **Conversation Memory**: Full chat history stored in `data/memory.json` for context continuity
-2. **Semantic Memory**: Distilled facts, preferences, tasks, and insights stored in TimescaleDB with vector embeddings for semantic search
+1. **Semantic Memory**: Distilled facts, preferences, tasks, and insights stored in TimescaleDB with vector embeddings for semantic search
 
 ## Target Use Case
 
 Personal assistant for developers who want:
+
 - Direct, no-BS communication style
 - Persistent context across sessions
 - Local model control with Ollama

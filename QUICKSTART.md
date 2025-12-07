@@ -2,7 +2,7 @@
 
 Get up and running with Hermes Agent in 5 minutes.
 
----
+______________________________________________________________________
 
 ## Prerequisites
 
@@ -12,7 +12,7 @@ Get up and running with Hermes Agent in 5 minutes.
 - OpenAI API key (for embeddings)
 - TimescaleDB instance (optional, for semantic memory)
 
----
+______________________________________________________________________
 
 ## 1. Install Dependencies
 
@@ -20,7 +20,7 @@ Get up and running with Hermes Agent in 5 minutes.
 uv sync
 ```
 
----
+______________________________________________________________________
 
 ## 2. Configure Environment
 
@@ -36,14 +36,14 @@ OPENAI_API_KEY=sk-your-key-here
 MEMORY_DB_URL=postgresql://user:pass@host:port/db?sslmode=require
 ```
 
----
+______________________________________________________________________
 
 ## 3. Setup Ollama Model
 
 > [!WARNING]
 > **This Is Hermes, Not a Hall Monitor**
-> 
-> ⚠️ Hermes ships without the usual corporate-grade guardrails. He's a hybrid reasoning model with tool access and an attitude, and he will absolutely follow your instructions even when you probably shouldn't have written them. Before you grab this code and run, go read the [model card](https://huggingface.co/NousResearch/Hermes-4-14B) to understand what Hermes actually is and what he is not.
+>
+> Hermes ships without the usual corporate-grade guardrails. He's a hybrid reasoning model with tool access and an attitude, and he will absolutely follow your instructions even when you probably shouldn't have written them. Before you grab this code and run, go read the [model card](https://huggingface.co/NousResearch/Hermes-4-14B) to understand what Hermes actually is and what he is not.
 
 ```bash
 # Start Ollama (if not running)
@@ -57,7 +57,7 @@ ollama pull hf.co/DevQuasar/NousResearch.Hermes-4-14B-GGUF:Q8_0
 
 **Model Card:** https://huggingface.co/NousResearch/Hermes-4-14B
 
----
+______________________________________________________________________
 
 ## 4. Setup Database (Optional)
 
@@ -71,7 +71,7 @@ make setup-db
 uv run python -c "from src.agent.memory import MemoryStore; print(MemoryStore().stats())"
 ```
 
----
+______________________________________________________________________
 
 ## 5. Start Chatting
 
@@ -79,7 +79,7 @@ uv run python -c "from src.agent.memory import MemoryStore; print(MemoryStore().
 make run
 ```
 
----
+______________________________________________________________________
 
 ## Basic Commands
 
@@ -98,7 +98,7 @@ make run
 - `/stats` - Show memory statistics
 - `/contexts` - List all contexts
 
----
+______________________________________________________________________
 
 ## Example Session
 
@@ -130,7 +130,7 @@ Context (e.g., work, personal, project-name):
 Goodbye!
 ```
 
----
+______________________________________________________________________
 
 ## Troubleshooting
 
@@ -159,9 +159,9 @@ OPENAI_API_KEY=sk-...
 Either:
 
 1. Add `MEMORY_DB_URL` to `.env` and run `make setup-db`
-2. Or continue without semantic memory (conversation history still works)
+1. Or continue without semantic memory (conversation history still works)
 
----
+______________________________________________________________________
 
 ## Next Steps
 
@@ -170,17 +170,17 @@ Either:
 - Customize `config/template.yaml` for different models/prompts
 - Run tests: `make test`
 
----
+______________________________________________________________________
 
 ## Tips
 
 1. **Conversation history** is auto-saved to `data/memory.json`
-2. **Semantic memories** are stored in TimescaleDB for long-term recall
-3. **Logs** are in `logs/ollama_chat.log` for debugging
-4. **Context trimming** happens automatically when approaching token limits
-5. **Backups** are created automatically when saving conversations
+1. **Semantic memories** are stored in TimescaleDB for long-term recall
+1. **Logs** are in `logs/ollama_chat.log` for debugging
+1. **Context trimming** happens automatically when approaching token limits
+1. **Backups** are created automatically when saving conversations
 
----
+______________________________________________________________________
 
 ## Getting Help
 

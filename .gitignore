@@ -8,9 +8,8 @@ __pycache__/
 venv/
 ENV/
 env/
-
-# UV
-uv.lock
+.ruff_cache/
+.venv/
 
 # Memory files
 memory.json

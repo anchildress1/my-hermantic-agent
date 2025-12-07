@@ -6,14 +6,14 @@ Configuration guide for the Hermes-4-14B model parameters in `config/template.ya
 
 > [!WARNING]
 > **This Is Hermes, Not a Hall Monitor**
-> 
-> ⚠️ Hermes ships without the usual corporate-grade guardrails. He's a hybrid reasoning model with tool access and an attitude, and he will absolutely follow your instructions even when you probably shouldn't have written them. Before you grab this code and run, go read the [model card](https://huggingface.co/NousResearch/Hermes-4-14B) to understand what Hermes actually is and what he is not.
+>
+> Hermes ships without the usual corporate-grade guardrails. He's a hybrid reasoning model with tool access and an attitude, and he will absolutely follow your instructions even when you probably shouldn't have written them. Before you grab this code and run, go read the [model card](https://huggingface.co/NousResearch/Hermes-4-14B) to understand what Hermes actually is and what he is not.
 
 Hermes-4-14B is a powerful conversational model by NousResearch, designed for direct, unfiltered interactions. It purposefully lacks the guardrails commonly seen in other models.
 
 **Model Card:** https://huggingface.co/NousResearch/Hermes-4-14B
 
----
+______________________________________________________________________
 
 ## Parameter Reference
 
@@ -95,7 +95,7 @@ Context window size in tokens
 - Larger = more memory, slower processing
 - Agent keeps 75% for history, 25% for generation
 
----
+______________________________________________________________________
 
 ## Tuning Tips
 
@@ -130,21 +130,21 @@ presence_penalty: 0.8
 frequency_penalty: 0.8
 ```
 
----
+______________________________________________________________________
 
 ## Model Comparison
 
-| Model | Size | Context | Speed | Quality |
-|-------|------|---------|-------|---------|
-| Hermes-4-14B | 14B | 8K | Medium | High |
-| Llama-3.2-3B | 3B | 8K | Fast | Medium |
-| Mistral-7B | 7B | 8K | Fast | High |
-| Llama-3.1-70B | 70B | 128K | Slow | Very High |
+| Model         | Size | Context | Speed  | Quality   |
+| ------------- | ---- | ------- | ------ | --------- |
+| Hermes-4-14B  | 14B  | 8K      | Medium | High      |
+| Llama-3.2-3B  | 3B   | 8K      | Fast   | Medium    |
+| Mistral-7B    | 7B   | 8K      | Fast   | High      |
+| Llama-3.1-70B | 70B  | 128K    | Slow   | Very High |
 
----
+______________________________________________________________________
 
 ## Resources
 
-- **Model Card**: [[https://huggingface.co/NousResearch/Hermes-4-14B]]
-- **Ollama Docs**: [[https://ollama.ai/library]]
-- **Parameter Guide**: [[https://github.com/ollama/ollama/blob/main/docs/modelfile.md]]
+- **Model Card**: \[[https://huggingface.co/NousResearch/Hermes-4-14B]\]
+- **Ollama Docs**: \[[https://ollama.ai/library]\]
+- **Parameter Guide**: \[[https://github.com/ollama/ollama/blob/main/docs/modelfile.md]\]

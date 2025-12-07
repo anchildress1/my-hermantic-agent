@@ -4,8 +4,8 @@ Quick guide to using Hermes Agent effectively.
 
 > [!WARNING]
 > **This Is Hermes, Not a Hall Monitor**
-> 
-> ⚠️ Hermes ships without the usual corporate-grade guardrails. He's a hybrid reasoning model with tool access and an attitude, and he will absolutely follow your instructions even when you probably shouldn't have written them. Before you grab this code and run, go read the [model card](https://huggingface.co/NousResearch/Hermes-4-14B) to understand what Hermes actually is and what he is not.
+>
+> Hermes ships without the usual corporate-grade guardrails. He's a hybrid reasoning model with tool access and an attitude, and he will absolutely follow your instructions even when you probably shouldn't have written them. Before you grab this code and run, go read the [model card](https://huggingface.co/NousResearch/Hermes-4-14B) to understand what Hermes actually is and what he is not.
 
 ## Getting Started
 
@@ -17,16 +17,16 @@ Quick guide to using Hermes Agent effectively.
    make run
    ```
 
-2. You'll see:
+1. You'll see:
 
    ```bash
    🤖 Ollama Chat (Model: hf.co/DevQuasar/NousResearch.Hermes-4-14B-GGUF:Q8_0)
    ✓ Semantic memory connected
-   
+
    💬 You:
    ```
 
-3. Just start typing! The agent remembers your conversation.
+1. Just start typing! The agent remembers your conversation.
 
 ### Basic Chat
 
@@ -44,7 +44,7 @@ Type `quit`, `exit`, or press `Ctrl+C`:
 - Conversation auto-saves to `data/memory.json`
 - Next time you start, it continues where you left off
 
----
+______________________________________________________________________
 
 ## Conversation Commands
 
@@ -70,10 +70,9 @@ Type `quit`, `exit`, or press `Ctrl+C`:
 /stream  # Toggle streaming mode on/off
 ```
 
----
+______________________________________________________________________
 
 ## Memory Commands
-
 
 ```bash
 💬 You: /remember I prefer Python over JavaScript
@@ -133,7 +132,7 @@ Context (e.g., work, personal, project-name):
   Last memory: 2025-12-06T13:27:20Z
 ```
 
----
+______________________________________________________________________
 
 ## Tips & Tricks
 
@@ -175,7 +174,7 @@ When storing memories, use confidence to indicate certainty:
 - `0.8` - Pretty sure
 - `0.5` - Uncertain, might change
 
----
+______________________________________________________________________
 
 ## Common Workflows
 
@@ -212,7 +211,7 @@ Context: learning
 # Later, search what you learned
 ```
 
----
+______________________________________________________________________
 
 ## Troubleshooting
 
@@ -240,7 +239,7 @@ Context: learning
 - Check Ollama is using GPU: `ollama ps`
 - Reduce `num_predict` for shorter responses
 
----
+______________________________________________________________________
 
 ## Advanced Usage
 
@@ -283,7 +282,7 @@ for text, type, context in facts:
     store.remember(text, type, context)
 ```
 
----
+______________________________________________________________________
 
 ## Keyboard Shortcuts
 
@@ -291,17 +290,17 @@ for text, type, context in facts:
 - `Ctrl+D` - Exit without saving (not recommended)
 - `Up Arrow` - Previous command (terminal feature)
 
----
+______________________________________________________________________
 
 ## Best Practices
 
 1. **Use descriptive contexts** - Makes searching easier
-2. **Store atomic memories** - One fact per memory
-3. **Regular cleanup** - Delete outdated tasks
-4. **Check stats** - Monitor memory growth
-5. **Backup** - `data/memory.json` and database
+1. **Store atomic memories** - One fact per memory
+1. **Regular cleanup** - Delete outdated tasks
+1. **Check stats** - Monitor memory growth
+1. **Backup** - `data/memory.json` and database
 
----
+______________________________________________________________________
 
 ## Getting Help
 

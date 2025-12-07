@@ -1,10 +1,14 @@
-# My Hermantic Agent
+![My Hermantic Agent Banner](./assets/my-hermantic-agent.jpg)
 
 > [!INFO]
 >
-> 🦄 I picked Hermes because he’s a hybrid reasoning model who can actually think, use tools, and throw shade right back when I deserve it. Most models crumble when I push them; Hermes leans in. So this repo is my no-plan, see-what-happens agent playground. Under the hood it’s a CLI-based conversational system built on NousResearch's Hermes-4-14B hosted locally with Ollama. I've started with persistent semantic memory backed by Tiger's TimescaleDB and OpenAI embeddings. It runs a dual-memory setup for short-term chat context and long-term recall, manages its own state without whining, and communicates the same way I do: direct, no BS. I’m basically giving a capable model a sandbox and too much freedom, and seeing what grows teeth. 🧛‍♂️
+> 🦄 I picked Hermes because he isn’t just another polite autocomplete model. He thinks, he reasons, he grabs tools without asking, and he’ll absolutely fire back when I deserve it. Most models fold when I push; Hermes accelerates. So this repo is my unapologetically chaotic testbed: no roadmap, no safety rails, just an agent let off the leash to see what it does.
+>
+> Underneath the sparkles and smoke it’s a CLI-driven conversational setup running NousResearch’s Hermes-4-14B locally through Ollama, with persistent semantic memory stitched together from Tiger’s TimescaleDB and OpenAI embeddings. It uses dual memory — short-term context plus long-term recall — manages its own state, and talks the only way I tolerate: direct, sharp, and not here to babysit anyone.
+>
+> Basically, I handed a capable reasoning model a sandbox, a blowtorch, and too much autonomy. Now I’m watching to see what grows teeth. 🔧✨🔥
 
----
+______________________________________________________________________
 
 ## Quick Start
 
@@ -25,7 +29,7 @@ make run
 
 **Full setup guide:** [QUICKSTART.md](QUICKSTART.md)
 
----
+______________________________________________________________________
 
 ## Features
 
@@ -37,12 +41,12 @@ make run
 - ⚡ **Fast** - Connection pooling, embedding caching, optimized queries
 - 🛡️ **Robust** - Comprehensive error handling, atomic file writes, graceful degradation
 
----
+______________________________________________________________________
 
 ## Architecture
 
 ```mermaid
-%%{init: {'theme':'base'}}%%
+%%{init: {'theme':'base', 'lightTheme':'default', 'darkTheme':'dark', 'securityLevel':'strict', 'accessibility': {'label': 'Architecture diagram', 'description': 'System architecture and data flow; supports light/dark modes.'}}}%%
 graph TB
     CLI[CLI Interface] --> Chat[Chat Manager]
     Chat --> Ollama[Ollama LLM]
@@ -50,16 +54,11 @@ graph TB
     Chat --> JSON[Conversation JSON]
     Memory --> OpenAI[OpenAI Embeddings]
     Memory --> TimescaleDB[(TimescaleDB + pgvector)]
-    
-    style CLI fill:#4A90E2
-    style Ollama fill:#FF6B6B
-    style OpenAI fill:#4ECDC4
-    style TimescaleDB fill:#95E1D3
 ```
 
 **Detailed diagrams:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
----
+______________________________________________________________________
 
 ## Documentation
 
@@ -69,7 +68,7 @@ graph TB
 - 🔧 **[Memory API](docs/MEMORY_API.md)** - Semantic memory reference
 - 🚀 **[Quick Start](QUICKSTART.md)** - 5-minute setup guide
 
----
+______________________________________________________________________
 
 ## Usage
 
@@ -111,7 +110,7 @@ Context: coding
 
 **Full command reference:** [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
 
----
+______________________________________________________________________
 
 ## Requirements
 
@@ -121,7 +120,7 @@ Context: coding
 - **OpenAI API Key** - For embeddings ([platform.openai.com](https://platform.openai.com/api-keys))
 - **TimescaleDB** - Optional, for semantic memory ([timescale.cloud](https://console.timescale.cloud))
 
----
+______________________________________________________________________
 
 ## Installation
 
@@ -143,8 +142,8 @@ cp .env.example .env
 ### 3. Setup Ollama
 
 > [!WARN] **This Is Hermes, Not a Hall Monitor**
-> 
-> ⚠️ Hermes ships without the usual corporate-grade guardrails, seatbelts, bumpers, or soft edges. He’s a hybrid reasoning model with tool access and an attitude, and he will absolutely follow your instructions even when you probably shouldn’t have written them. Before you grab this code and run, go read the docs on what Hermes actually is and what he is not. If you treat him like a safe, shrink-wrapped assistant, that’s on you. This project is an experiment, not a babysitter.
+>
+> Hermes ships without the usual corporate-grade guardrails, seatbelts, bumpers, or soft edges. He’s a hybrid reasoning model with tool access and an attitude, and he will absolutely follow your instructions even when you probably shouldn’t have written them. Before you grab this code and run, go read the docs on what Hermes actually is and what he is not. If you treat him like a safe, shrink-wrapped assistant, that’s on you. This project is an experiment, not a babysitter.
 
 ```bash
 # Pull the Hermes-4 model
@@ -160,7 +159,7 @@ ollama serve
 make setup-db
 ```
 
----
+______________________________________________________________________
 
 ## Project Structure
 
@@ -178,7 +177,7 @@ hermes-agent/
 └── .env                   # Environment variables
 ```
 
----
+______________________________________________________________________
 
 ## Configuration
 
@@ -210,7 +209,7 @@ OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_EMBEDDING_DIM=1536
 ```
 
----
+______________________________________________________________________
 
 ## Development
 
@@ -228,18 +227,20 @@ make clean
 make help
 ```
 
----
+______________________________________________________________________
 
 ## Memory System
 
 ### Dual-Memory Architecture
 
 1. **Short-term** - Full conversation history in `data/memory.json`
+
    - Auto-saves on exit
    - Auto-loads on startup
    - Smart context trimming
 
-2. **Long-term** - Semantic memories in TimescaleDB
+1. **Long-term** - Semantic memories in TimescaleDB
+
    - Vector embeddings for similarity search
    - Organized by type and context
    - Persistent across conversations
@@ -251,15 +252,15 @@ make help
 - **task** - Todos and action items
 - **insight** - Observations and patterns
 
----
+______________________________________________________________________
 
 ## Tech Stack
 
 <div align="center">
 
-![Python](https://img.shields.io/badge/python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white) ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white) ![TimescaleDB](https://img.shields.io/badge/TimescaleDB-FDB515?style=for-the-badge&logo=timescale&logoColor=black) 
+![Python](https://img.shields.io/badge/python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white) ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white) ![TimescaleDB](https://img.shields.io/badge/TimescaleDB-FDB515?style=for-the-badge&logo=timescale&logoColor=black)
 
-![Hermes](https://img.shields.io/badge/Hermes-14B%20Hybrid%20Reasoner-0B3D91?style=for-the-badge&logo=lightning&logoColor=white) ![Hugging Face Badge](https://img.shields.io/badge/🤗_Hugging_Face-FFD21E?style=for-the-badge) ![Ollama](https://img.shields.io/badge/Ollama-000000?style=for-the-badge&logo=ollama&logoColor=white) ![OpenAI](https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white)
+![Hermes](https://img.shields.io/badge/Hermes-14B%20Hybrid%20Reasoner-0B3D91?style=for-the-badge&logo=lightning&logoColor=white) ![Hugging Face Badge](https://img.shields.io/badge/%F0%9F%A4%97_Hugging_Face-FFD21E?style=for-the-badge) ![Ollama](https://img.shields.io/badge/Ollama-000000?style=for-the-badge&logo=ollama&logoColor=white) ![OpenAI](https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white)
 
 ![Kiro](https://img.shields.io/badge/Built_with-Kiro-7C3AED?style=for-the-badge)
 ![Verdant](https://img.shields.io/badge/Powered_by-Verdant-00D486?style=for-the-badge)
@@ -268,13 +269,13 @@ make help
 </div>
 
 - **Runtime**: Python 3.12+ with [uv package manager](https://docs.astral.sh/uv/)
-- **Model**: [NousResearch/Hermes-4-14B](https://huggingface.co/NousResearch/Hermes-4-14B)  
-- **Ollama**: [ollama.ai](https://ollama.ai)  
+- **Model**: [NousResearch/Hermes-4-14B](https://huggingface.co/NousResearch/Hermes-4-14B)
+- **Ollama**: [ollama.ai](https://ollama.ai)
 - **TigerData Agentic Postgres**: [tigerdata.com](https://www.tigerdata.com)
 - **Embeddings**: OpenAI API (text-embedding-3-small)
 - **Storage**: JSON for conversations, PostgreSQL for semantic memory
 
----
+______________________________________________________________________
 
 ## License
 

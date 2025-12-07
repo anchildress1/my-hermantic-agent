@@ -1,4 +1,4 @@
-.PHONY: help install setup setup-db run test coverage logs clean
+.PHONY: help install setup setup-db run test coverage logs clean format lint
 
 help:
 	@echo "Ollama Agent - Available Commands:"
@@ -7,6 +7,8 @@ help:
 	@echo "  make setup           - Setup environment (.env file)"
 	@echo "  make setup-db        - Initialize TimescaleDB schema"
 	@echo "  make run             - Start the chat interface"
+	@echo "  make format          - Format code with ruff"
+	@echo "  make lint            - Lint code with ruff"
 	@echo "  make test            - Run tests"
 	@echo "  make coverage        - Run tests with coverage report"
 	@echo "  make logs            - Tail application logs"
@@ -30,6 +32,14 @@ setup-db:
 run:
 	uv run python main.py
 
+format:
+	uv run ruff format .
+	uv run mdformat .
+
+lint:
+	uv run ruff check . --fix
+	uv run mdformat --check .
+
 test:
 	uv run pytest tests/ -v
 
@@ -40,8 +50,8 @@ logs:
 	tail -f logs/ollama_chat.log
 
 clean:
-	rm -rf logs/*.log
-	rm -rf data/memory.json data/memory.json.bak
+	rm -rf logs/*.logs
 	rm -rf .coverage .pytest_cache htmlcov
 	rm -rf src/__pycache__ src/agent/__pycache__ tests/__pycache__ tests/integration/__pycache__
+	rm -rf .venv .ruff_cache
 	@echo "✓ Cleaned logs, memory files, and test artifacts"
