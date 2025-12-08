@@ -9,6 +9,7 @@ venv/
 ENV/
 env/
 .ruff_cache/
+.pytest_cache/
 .venv/
 
 # Logs
@@ -32,6 +33,11 @@ logs
 # OS
 .DS_Store
 Thumbs.db
+
+# Tests
+.coverage
+htmlcov/
+
 
 # Environment
 .env

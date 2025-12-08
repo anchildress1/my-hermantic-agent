@@ -132,19 +132,8 @@ frequency_penalty: 0.8
 
 ______________________________________________________________________
 
-## Model Comparison
-
-| Model         | Size | Context | Speed  | Quality   |
-| ------------- | ---- | ------- | ------ | --------- |
-| Hermes-4-14B  | 14B  | 8K      | Medium | High      |
-| Llama-3.2-3B  | 3B   | 8K      | Fast   | Medium    |
-| Mistral-7B    | 7B   | 8K      | Fast   | High      |
-| Llama-3.1-70B | 70B  | 128K    | Slow   | Very High |
-
-______________________________________________________________________
-
 ## Resources
 
-- **Model Card**: \[[https://huggingface.co/NousResearch/Hermes-4-14B]\]
-- **Ollama Docs**: \[[https://ollama.ai/library]\]
-- **Parameter Guide**: \[[https://github.com/ollama/ollama/blob/main/docs/modelfile.md]\]
+- **Model Card**: [https://huggingface.co/NousResearch/Hermes-4-14B](https://huggingface.co/NousResearch/Hermes-4-14B)
+- **Ollama Docs**: [https://ollama.ai/library](https://ollama.ai/library)
+- **Parameter Guide**: [https://github.com/ollama/ollama/blob/main/docs/modelfile.md](https://github.com/ollama/ollama/blob/main/docs/modelfile.md)

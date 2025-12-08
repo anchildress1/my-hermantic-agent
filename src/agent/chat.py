@@ -141,6 +141,42 @@ def estimate_tokens(text: str) -> int:
     return len(text) // 4
 
 
+# ANSI color helpers (simple, no external deps)
+ANSI_RESET = "\u001b[0m"
+ANSI_BOLD = "\u001b[1m"
+ANSI_CYAN = "\u001b[36m"
+ANSI_YELLOW = "\u001b[33m"
+ANSI_GREEN = "\u001b[32m"
+
+
+def print_help(memory_store: Optional[object]):
+    """Print compact, colored help for commands."""
+    print()
+    print(f"{ANSI_BOLD}Commands{ANSI_RESET}")
+    print(f"  {ANSI_CYAN}/?{ANSI_RESET}         Show this help")
+    print(f"  {ANSI_CYAN}/quit{ANSI_RESET}      Exit and save")
+    print(
+        f"  {ANSI_CYAN}/clear{ANSI_RESET}     Clear conversation (keeps system prompt)"
+    )
+    print(f"  {ANSI_CYAN}/save{ANSI_RESET}      Save conversation manually")
+    print(
+        f"  {ANSI_CYAN}/load [file]{ANSI_RESET} Load saved memory from JSON (defaults to saved memory)"
+    )
+    print(f"  {ANSI_CYAN}/trim{ANSI_RESET}      Trim old messages to fit context")
+    if memory_store:
+        print()
+        print(f"{ANSI_BOLD}Memory Commands{ANSI_RESET}")
+        print(f"  {ANSI_CYAN}/remember <text>{ANSI_RESET}  Store a memory")
+        print(f"  {ANSI_CYAN}/recall <query>{ANSI_RESET}     Search semantic memories")
+        print(
+            f"  {ANSI_CYAN}/memories [context]{ANSI_RESET} List recent memories or by context"
+        )
+        print(f"  {ANSI_CYAN}/forget <id>{ANSI_RESET}      Delete memory by ID")
+        print(f"  {ANSI_CYAN}/contexts{ANSI_RESET}       List memory contexts")
+        print(f"  {ANSI_CYAN}/stats{ANSI_RESET}          Show memory statistics")
+    print()
+
+
 def count_message_tokens(messages: list) -> int:
     """Estimate total tokens in message history."""
     total = 0
@@ -242,7 +278,7 @@ def check_ollama_connection(model: str) -> bool:
         return False
 
 
-def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):
+def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma: no cover
     """Run interactive chat loop with Ollama."""
     model = template.get("model", "llama3.2")
     system_prompt = template.get("system", "")
@@ -277,34 +313,14 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):
 
     if memory_path.exists():
         print(
-            f"⚠️  Found saved conversation at {memory_file}. Use '/load' to restore it manually."
+            f"{ANSI_YELLOW}⚠️  Found saved conversation at {memory_file}.{ANSI_RESET} Use {ANSI_CYAN}/load{ANSI_RESET} to restore it."
         )
 
-    print(f"🤖 Ollama Chat (Model: {model})")
-    print(
-        f"📊 Context window: {max_context} tokens (keeping {max_history_tokens} for history)"
-    )
-    print(f"📊 Parameters: {json.dumps(params, indent=2)}")
-    print("\nConversation Commands:")
-    print("  '/quit', '/exit', or '/bye' - End conversation and save")
-    print("  '/context' - Show full conversation context with token counts")
-    print("  '/context brief' - Show brief context summary")
-    print("  '/clear' - Clear conversation history (keeps system prompt)")
-    print("  '/save' - Manually save current conversation")
-    print(
-        "  '/load [file]' - Reload saved memory from a JSON file (defaults to saved memory)"
-    )
-    print("  '/stream' - Toggle streaming mode")
-    print("  '/trim' - Manually trim old messages")
+    print(f"{ANSI_GREEN}🤖 Ollama Chat{ANSI_RESET} — Model: {model}")
+    print(f"Type {ANSI_CYAN}/?{ANSI_RESET} for commands")
 
-    if memory_store:
-        print("\nMemory Commands:")
-        print("  '/remember <text>' - Store a memory manually")
-        print("  '/recall <query>' - Search semantic memories")
-        print("  '/memories [context]' - List recent memories")
-        print("  '/forget <id>' - Delete a memory by ID")
-        print("  '/contexts' - List all memory contexts")
-        print("  '/stats' - Show memory statistics")
+    # Memory commands are intentionally not printed at startup.
+    # Use '/?' to view memory commands (they will appear only when requested).
     print()
 
     streaming = True
@@ -317,6 +333,10 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):
                 save_memory(messages, memory_file)
                 print("Later!")
                 break
+
+            if user_input == "/?":
+                print_help(memory_store)
+                continue
 
             if user_input == "/context":
                 print_context(messages, show_full=True)
@@ -342,25 +362,54 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):
                 continue
 
             if user_input.startswith("/load"):
-                parts = user_input.split(maxsplit=1)
-                target_file = parts[1] if len(parts) > 1 else memory_file
-                loaded_messages = load_memory(target_file)
+                # Support multiple files: /load file1.json file2.json
+                tokens = user_input.split()[1:]
 
-                if loaded_messages:
-                    messages = loaded_messages
-                    if system_prompt:
-                        if messages and messages[0].get("role") == "system":
-                            messages[0]["content"] = system_prompt
-                        else:
-                            messages.insert(
-                                0, {"role": "system", "content": system_prompt}
+                # If no file specified, load default memory and ensure system prompt
+                if not tokens:
+                    loaded_messages = load_memory(memory_file)
+                    if loaded_messages:
+                        messages = loaded_messages
+                        if system_prompt:
+                            if messages and messages[0].get("role") == "system":
+                                messages[0]["content"] = system_prompt
+                            else:
+                                messages.insert(
+                                    0, {"role": "system", "content": system_prompt}
+                                )
+                        print(
+                            f"{ANSI_GREEN}🔄 Memory loaded from {memory_file}{ANSI_RESET}"
+                        )
+                    else:
+                        messages = []
+                        if system_prompt:
+                            messages.append(
+                                {"role": "system", "content": system_prompt}
                             )
-                    print(f"🔄 Memory loaded from {target_file}")
+                        print(
+                            f"{ANSI_YELLOW}⚠️  No saved memory loaded from {memory_file}{ANSI_RESET}"
+                        )
+                    continue
+
+                # User specified one or more files — load them exactly as provided
+                combined: List[Dict] = []
+                any_loaded = False
+                for f in tokens:
+                    loaded = load_memory(f, show_status=False)
+                    if loaded:
+                        combined.extend(loaded)
+                        any_loaded = True
+
+                if any_loaded:
+                    messages = combined
+                    print(
+                        f"{ANSI_GREEN}🔄 Memory loaded from: {' '.join(tokens)}{ANSI_RESET}"
+                    )
                 else:
-                    messages = []
-                    if system_prompt:
-                        messages.append({"role": "system", "content": system_prompt})
-                    print(f"⚠️  No saved memory loaded from {target_file}")
+                    print(
+                        f"{ANSI_YELLOW}⚠️  No saved memory loaded from: {' '.join(tokens)}{ANSI_RESET}"
+                    )
+                # When explicit files specified, DO NOT inject or modify system prompt
                 continue
 
             if user_input == "/stream":

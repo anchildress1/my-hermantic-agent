@@ -54,4 +54,4 @@ clean:
 	rm -rf .coverage .pytest_cache htmlcov
 	rm -rf src/__pycache__ src/agent/__pycache__ tests/__pycache__ tests/integration/__pycache__
 	rm -rf .venv .ruff_cache
-	@echo "✓ Cleaned logs, memory files, and test artifacts"
+	@echo "✓ Cleaned logs, env files, and test artifacts"

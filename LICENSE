@@ -17,7 +17,7 @@ copy, modify, and/or distribute the Software for any purpose—including persona
 
 3. **Attribution.**
    Any public fork, copy, or substantial reuse must include this LICENSE and a clear statement in your documentation or README:
-   “Based on original work by Ashley Childress – see \[original repo link\].”
+   “Based on original work by Ashley Childress – see https://github.com/anchildress1/my-hermantic-agent”
 
 4. **No Warranty.**
    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -27,4 +27,4 @@ Full license text: https://polyformproject.org/licenses/shield/1.0.0/
 ---
 
 This project is licensed under Polyform Shield License 1.0.0.
-For exceptions or monetization/commercialization questions, contact Ashley Childress at [human@checkmarkdevtools.dev](mailto:human@checkmarkdevtools.dev).
+For exceptions or monetization/commercialization questions, contact Ashley Childress at human@checkmarkdevtools.dev.

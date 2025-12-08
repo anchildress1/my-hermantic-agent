@@ -103,7 +103,7 @@ for task in old_tasks:
 
 ## Troubleshooting
 
-**"MEMORY_DB_URL not set"** → Add to `.env`\
-**"Rate limit exceeded"** → Wait or reduce frequency\
-**"Database connection failed"** → Run `make setup-db`\
-**"No memories found"** → Check `stats()` to verify data exists
+- **"MEMORY_DB_URL not set"** → Add to `.env`
+- **"Rate limit exceeded"** → Wait or reduce frequency
+- **"Database connection failed"** → Run `make setup-db`
+- **"No memories found"** → Check `stats()` to verify data exists

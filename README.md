@@ -1,7 +1,6 @@
 ![My Hermantic Agent Banner](./assets/my-hermantic-agent.jpg)
 
 > [!IMPORTANT]
->
 > 🦄 I picked Hermes because he isn’t just another polite autocomplete model. He thinks, he reasons, he grabs tools without asking, and he’ll absolutely fire back when I deserve it. Most models fold when I push; Hermes accelerates. So this repo is my unapologetically chaotic testbed: no roadmap, no safety rails, just an agent let off the leash to see what it does.
 >
 > Underneath the sparkles and smoke it’s a CLI-driven conversational setup running NousResearch’s Hermes-4-14B locally through Ollama, with persistent semantic memory stitched together from Tiger’s TimescaleDB and OpenAI embeddings. It uses dual memory — short-term context plus long-term recall — manages its own state, and talks the only way I tolerate: direct, sharp, and not here to babysit anyone.
@@ -141,7 +140,8 @@ cp .env.example .env
 
 ### 3. Setup Ollama
 
-> [!WARN] **This Is Hermes, Not a Hall Monitor**
+> [!WARNING]
+> **This Is Hermes, Not a Hall Monitor**
 >
 > Hermes ships without the usual corporate-grade guardrails, seatbelts, bumpers, or soft edges. He’s a hybrid reasoning model with tool access and an attitude, and he will absolutely follow your instructions even when you probably shouldn’t have written them. Before you grab this code and run, go read the docs on what Hermes actually is and what he is not. If you treat him like a safe, shrink-wrapped assistant, that’s on you. This project is an experiment, not a babysitter.
 
@@ -283,4 +283,10 @@ ______________________________________________________________________
 
 ## License
 
-This project is released under the [Polyform Shield License 1.0.0](https://polyformproject.org/licenses/shield/1.0.0/). In plain language: use it, study it, fork it, remix it, build weird things with it — just don’t make money from it or wrap it into anything commercial without getting my permission first. No loopholes, no “but technically,” no marketplace shenanigans. The full legal text lives in the [LICENSE](LICENSE) file if you need the exact wording. 📜🛡️
+This project is released under the [Polyform Shield License 1.0.0](https://polyformproject.org/licenses/shield/1.0.0/).
+
+In plain language: use it, study it, fork it, remix it, build weird things with it — just don’t make money from it or wrap it into anything commercially sold without getting my permission first. No loopholes, no weird “but technically,” no marketplace shenanigans.
+
+Bottom line? I build free and open software for fun, but with a caveat: if *anybody* is getting paid for it, then I'm first in line! Otherwise, help yourself. 😇
+
+The full legal text lives in the [LICENSE](LICENSE) file if you need the exact wording. 📜🛡️
