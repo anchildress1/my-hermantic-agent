@@ -6,10 +6,13 @@ import tempfile
 import shutil
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 # Setup module logger
 logger = logging.getLogger(__name__)
+
+
+DEFAULT_MEMORY_FILE = "data/memory.json"
 
 
 def setup_logging():
@@ -30,7 +33,7 @@ def setup_logging():
     logger.info("Logging initialized")
 
 
-def load_template(template_path: str = "config/template.yaml") -> Dict:
+def load_template(template_path: Path) -> Dict:
     """Load model template configuration from YAML file."""
     try:
         with open(template_path, "r") as f:
@@ -45,7 +48,7 @@ def load_template(template_path: str = "config/template.yaml") -> Dict:
         raise
 
 
-def save_memory(messages: List[Dict], memory_file: str = "data/memory.json"):
+def save_memory(messages: List[Dict], memory_file: str = DEFAULT_MEMORY_FILE):
     """Save conversation history to file with atomic write."""
     memory_path = Path(memory_file)
     memory_path.parent.mkdir(parents=True, exist_ok=True)
@@ -78,7 +81,7 @@ def save_memory(messages: List[Dict], memory_file: str = "data/memory.json"):
         raise
 
 
-def load_memory(memory_file: str = "data/memory.json") -> List[Dict]:
+def load_memory(memory_file: str = DEFAULT_MEMORY_FILE) -> List[Dict]:
     """Load conversation history from file."""
     memory_path = Path(memory_file)
     if not memory_path.exists():
@@ -112,6 +115,25 @@ def load_memory(memory_file: str = "data/memory.json") -> List[Dict]:
     except Exception as e:
         logger.error(f"Failed to load memory: {e}")
         return []
+
+
+def archive_memory_snapshot(memory_file: str, prefix: str = "clear") -> Optional[Path]:
+    """Archive the current memory file before clearing context."""
+    memory_path = Path(memory_file)
+    if not memory_path.exists():
+        return None
+
+    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+    backup_name = f"{memory_path.stem}-{prefix}-{timestamp}.json"
+    backup_path = memory_path.with_name(backup_name)
+
+    try:
+        shutil.copy2(memory_path, backup_path)
+        logger.info(f"Archived memory before clear: {backup_path}")
+        return backup_path
+    except Exception as e:
+        logger.warning(f"Unable to archive memory snapshot: {e}")
+        return None
 
 
 def estimate_tokens(text: str) -> int:
@@ -198,7 +220,7 @@ def check_ollama_connection(model: str) -> bool:
     """Verify Ollama is running and model is available."""
     try:
         model_list = ollama.list()
-        available_models = [m["name"] for m in model_list.get("models", [])]
+        available_models = [m["model"] for m in model_list.get("models", [])]
 
         # Check for exact match or partial match (model might have :tag)
         model_found = any(model in m or m in model for m in available_models)
@@ -220,7 +242,7 @@ def check_ollama_connection(model: str) -> bool:
         return False
 
 
-def chat_loop(template: Dict, memory_file: str = "data/memory.json"):
+def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):
     """Run interactive chat loop with Ollama."""
     model = template.get("model", "llama3.2")
     system_prompt = template.get("system", "")
@@ -248,17 +270,15 @@ def chat_loop(template: Dict, memory_file: str = "data/memory.json"):
     # Keep 75% for history, 25% for generation
     max_history_tokens = int(max_context * 0.75)
 
-    # Try to load existing memory
-    messages = load_memory(memory_file)
+    memory_path = Path(memory_file)
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
 
-    # If no memory or system prompt changed, reinitialize
-    if not messages or (messages and messages[0].get("role") != "system"):
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-    elif system_prompt and messages[0]["content"] != system_prompt:
-        # Update system prompt if it changed
-        messages[0] = {"role": "system", "content": system_prompt}
+    if memory_path.exists():
+        print(
+            f"⚠️  Found saved conversation at {memory_file}. Use '/load' to restore it manually."
+        )
 
     print(f"🤖 Ollama Chat (Model: {model})")
     print(
@@ -266,12 +286,14 @@ def chat_loop(template: Dict, memory_file: str = "data/memory.json"):
     )
     print(f"📊 Parameters: {json.dumps(params, indent=2)}")
     print("\nConversation Commands:")
-    print("  'quit' or 'exit' - End conversation and save")
+    print("  '/quit', '/exit', or '/bye' - End conversation and save")
     print("  '/context' - Show full conversation context with token counts")
     print("  '/context brief' - Show brief context summary")
     print("  '/clear' - Clear conversation history (keeps system prompt)")
     print("  '/save' - Manually save current conversation")
-    print("  '/load' - Reload from saved memory")
+    print(
+        "  '/load [file]' - Reload saved memory from a JSON file (defaults to saved memory)"
+    )
     print("  '/stream' - Toggle streaming mode")
     print("  '/trim' - Manually trim old messages")
 
@@ -291,9 +313,9 @@ def chat_loop(template: Dict, memory_file: str = "data/memory.json"):
         try:
             user_input = input("\n💬 You: ").strip()
 
-            if user_input.lower() in ["quit", "exit", "bye"]:
+            if user_input.lower() in ["/quit", "/exit", "/bye"]:
                 save_memory(messages, memory_file)
-                print("Goodbye!")
+                print("Later!")
                 break
 
             if user_input == "/context":
@@ -305,10 +327,13 @@ def chat_loop(template: Dict, memory_file: str = "data/memory.json"):
                 continue
 
             if user_input == "/clear":
+                archive_path = archive_memory_snapshot(memory_file)
                 messages = []
                 if system_prompt:
                     messages.append({"role": "system", "content": system_prompt})
                 save_memory(messages, memory_file)
+                if archive_path:
+                    print(f"📦 Previous conversation archived to {archive_path}")
                 print("🗑️  Context cleared and saved!")
                 continue
 
@@ -316,10 +341,26 @@ def chat_loop(template: Dict, memory_file: str = "data/memory.json"):
                 save_memory(messages, memory_file)
                 continue
 
-            if user_input == "/load":
-                messages = load_memory(memory_file)
-                if not messages and system_prompt:
-                    messages.append({"role": "system", "content": system_prompt})
+            if user_input.startswith("/load"):
+                parts = user_input.split(maxsplit=1)
+                target_file = parts[1] if len(parts) > 1 else memory_file
+                loaded_messages = load_memory(target_file)
+
+                if loaded_messages:
+                    messages = loaded_messages
+                    if system_prompt:
+                        if messages and messages[0].get("role") == "system":
+                            messages[0]["content"] = system_prompt
+                        else:
+                            messages.insert(
+                                0, {"role": "system", "content": system_prompt}
+                            )
+                    print(f"🔄 Memory loaded from {target_file}")
+                else:
+                    messages = []
+                    if system_prompt:
+                        messages.append({"role": "system", "content": system_prompt})
+                    print(f"⚠️  No saved memory loaded from {target_file}")
                 continue
 
             if user_input == "/stream":

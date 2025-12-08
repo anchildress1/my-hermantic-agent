@@ -4,17 +4,17 @@ This document defines the coding standards, architectural patterns, and context 
 
 ## 1. Project Identity
 
-- **Name:** Hermantic Agent
+- **Name:** My Hermantic Agent
 - **Status:** Personal Toy / Experiment (Not for release/deployment)
 - **Purpose:** Autonomous agent system experimenting with embeddings, orchestration, and local LLMs.
 - **Core Stack:** Python 3.12+, PostgreSQL (`psycopg2`), Ollama, OpenAI API.
 
 ## 2. Tech Stack & Dependencies
 
-- **Language:** Python 3.12 (Strict requirement).
+- **Language:** Python 3.12 (Strict requirement) via `uv`
 - **Database:** PostgreSQL.
   - Driver: `psycopg2-binary`.
-  - Schema: Defined in `schema/init.sql`.
+  - Schema: Defined in `schema/000-init.sql`.
 - **LLM Integration:**
   - Local: `ollama`.
   - Cloud: `openai`.
@@ -27,7 +27,7 @@ This document defines the coding standards, architectural patterns, and context 
 
 - **Breaking Changes:** Explicitly encouraged over complicated solutions or backward compatibility.
 - **Hard-coding:** Acceptable and expected at this stage. We can change code freely.
-- **Versioning:** Patch versions only. Manual changelog updates by the agent.
+- **Versioning:** Prerelease patch versions only. Manual changelog updates by the agent.
 
 ### General
 
@@ -37,6 +37,7 @@ This document defines the coding standards, architectural patterns, and context 
 - **Imports:**
   - Group imports: Standard library -> Third-party -> Local application.
   - Use absolute imports for local modules (e.g., `from src.agent import memory`).
+- **Inline code comments:** must add value not otherwise apparent from reading the code
 
 ### Error Handling
 
@@ -74,5 +75,5 @@ When generating code or answering questions:
 
 ## 6. Common Tasks
 
-- **Adding a Migration:** Create a new `.`sql file in `schema/migrations/` with a sequential prefix.
-- **Running Tests:** Use `pytest` from the root directory.
+- **Adding a Migration:** Create a new `.`sql file in `schema/` with a sequential prefix.
+- **Executing commands:** Use `make` from the root directory pointing to a valid `uv` call

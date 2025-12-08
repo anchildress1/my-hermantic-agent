@@ -1,6 +1,6 @@
 ![My Hermantic Agent Banner](./assets/my-hermantic-agent.jpg)
 
-> [!INFO]
+> [!IMPORTANT]
 >
 > 🦄 I picked Hermes because he isn’t just another polite autocomplete model. He thinks, he reasons, he grabs tools without asking, and he’ll absolutely fire back when I deserve it. Most models fold when I push; Hermes accelerates. So this repo is my unapologetically chaotic testbed: no roadmap, no safety rails, just an agent let off the leash to see what it does.
 >
@@ -209,6 +209,12 @@ OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_EMBEDDING_DIM=1536
 ```
 
+You can also override which template file the agent loads by setting `TEMPLATE_CONFIG` in your `.env` file. By default the app uses `config/template.yaml`.
+
+```bash
+# TEMPLATE_CONFIG=config/template.yaml
+```
+
 ______________________________________________________________________
 
 ## Development
@@ -262,9 +268,7 @@ ______________________________________________________________________
 
 ![Hermes](https://img.shields.io/badge/Hermes-14B%20Hybrid%20Reasoner-0B3D91?style=for-the-badge&logo=lightning&logoColor=white) ![Hugging Face Badge](https://img.shields.io/badge/%F0%9F%A4%97_Hugging_Face-FFD21E?style=for-the-badge) ![Ollama](https://img.shields.io/badge/Ollama-000000?style=for-the-badge&logo=ollama&logoColor=white) ![OpenAI](https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white)
 
-![Kiro](https://img.shields.io/badge/Built_with-Kiro-7C3AED?style=for-the-badge)
-![Verdant](https://img.shields.io/badge/Powered_by-Verdant-00D486?style=for-the-badge)
-![ChatGPT](https://img.shields.io/badge/Assisted_by-ChatGPT-74AA9C?style=for-the-badge&logo=openai&logoColor=white)
+![Kiro](https://img.shields.io/badge/Built_with-Kiro-7C3AED?style=for-the-badge) ![Verdant](https://img.shields.io/badge/Powered_by-Verdant-00D486?style=for-the-badge) ![GitHub Copilot](https://img.shields.io/badge/Enriched_by-GitHub%20Copilot-000?logoColor=fff&style=for-the-badge) ![ChatGPT](https://img.shields.io/badge/Assisted_by-ChatGPT-74AA9C?style=for-the-badge&logoColor=white)
 
 </div>
 

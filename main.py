@@ -52,18 +52,15 @@ def validate_environment() -> bool:
 
 
 def main():
-    # Setup logging first
     Path("logs").mkdir(exist_ok=True)
     setup_logging()
 
     logger.info("Starting Ollama Agent")
 
-    # Validate environment
     if not validate_environment():
         return
 
-    # Load template
-    template_path = Path("config/template.yaml")
+    template_path = Path(os.getenv("TEMPLATE_CONFIG", "config/template.yaml"))
 
     if not template_path.exists():
         logger.error(f"Template file not found: {template_path}")

@@ -60,9 +60,12 @@ ______________________________________________________________________
 ```bash
 /clear   # Clear conversation (keeps system prompt)
 /save    # Manually save conversation
+/load    # Load most recently saved context or file specified
 /load    # Reload from saved file
 /trim    # Manually trim old messages
 ```
+
+> ✅ The previous conversation is archived to `data/memory-clear-<timestamp>.json` each time `/clear` runs, so you can inspect or restore the cleared context later if needed.
 
 ### Toggle Features
 

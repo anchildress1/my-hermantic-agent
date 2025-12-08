@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS agent_memories (
     source_context TEXT,
     embedding vector(1536) NOT NULL,
     embedding_model VARCHAR(100) NOT NULL,
+    embedding_dim INTEGER DEFAULT 1536 NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_accessed TIMESTAMPTZ,
     access_count INTEGER NOT NULL DEFAULT 0
@@ -31,13 +32,13 @@ CREATE TABLE IF NOT EXISTS agent_memories (
 
 -- Vector similarity search using IVFFlat algorithm
 -- lists=100 is good for up to 100K memories, increase for larger datasets
-DO $$ 
+DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_indexes 
+        SELECT 1 FROM pg_indexes
         WHERE indexname = 'idx_memories_embedding'
     ) THEN
-        CREATE INDEX idx_memories_embedding ON agent_memories 
+        CREATE INDEX idx_memories_embedding ON agent_memories
             USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
     END IF;
 END $$;
@@ -48,14 +49,14 @@ CREATE INDEX IF NOT EXISTS idx_memories_context ON agent_memories(context);
 
 CREATE INDEX IF NOT EXISTS idx_memories_created_at ON agent_memories(created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_memories_fts ON agent_memories 
+CREATE INDEX IF NOT EXISTS idx_memories_fts ON agent_memories
     USING gin(to_tsvector('english', memory_text));
 
 -- ============================================================================
 -- Convenience view for browsing memories
 -- ============================================================================
 CREATE OR REPLACE VIEW memory_summary AS
-SELECT 
+SELECT
     id,
     -- Truncate long text for preview
     LEFT(memory_text, 100) || CASE WHEN LENGTH(memory_text) > 100 THEN '...' ELSE '' END as preview,
@@ -87,6 +88,7 @@ COMMENT ON COLUMN agent_memories.confidence IS 'Confidence score 0.0-1.0 (0=unce
 COMMENT ON COLUMN agent_memories.source_context IS 'Optional snippet of conversation that triggered this memory';
 COMMENT ON COLUMN agent_memories.embedding IS 'Vector embedding (default 1536 dimensions for text-embedding-3-small, configurable via EMBEDDING_DIM)';
 COMMENT ON COLUMN agent_memories.embedding_model IS 'Model used to generate embedding (for tracking/migration)';
+COMMENT ON COLUMN agent_memories.embedding_dim IS 'Embedding vector dimensions (1536 for text-embedding-3-small, 3072 for text-embedding-3-large)';
 COMMENT ON COLUMN agent_memories.created_at IS 'Timestamp when memory was created';
 COMMENT ON COLUMN agent_memories.last_accessed IS 'Timestamp of last access (updated on recall)';
 COMMENT ON COLUMN agent_memories.access_count IS 'Number of times this memory has been recalled';

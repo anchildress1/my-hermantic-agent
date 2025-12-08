@@ -36,6 +36,13 @@ OPENAI_API_KEY=sk-your-key-here
 MEMORY_DB_URL=postgresql://user:pass@host:port/db?sslmode=require
 ```
 
+You can also point the agent to a private template file by setting `TEMPLATE_CONFIG` in your `.env`:
+
+```bash
+# TEMPLATE_CONFIG=config/template.yaml
+# or point to a private file: TEMPLATE_CONFIG=/path/to/my_private_template.yaml
+```
+
 ______________________________________________________________________
 
 ## 3. Setup Ollama Model
