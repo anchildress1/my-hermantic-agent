@@ -1,9 +1,6 @@
 import json
 from pathlib import Path
 import yaml
-import shutil
-import tempfile
-import os
 import pytest
 
 from src.agent import chat
@@ -11,7 +8,11 @@ from src.agent import chat
 
 def test_load_template_success(tmp_path):
     p = tmp_path / "template.yaml"
-    data = {"model": "llama3.2", "system": "You are helpful", "parameters": {"num_ctx": 1024}}
+    data = {
+        "model": "llama3.2",
+        "system": "You are helpful",
+        "parameters": {"num_ctx": 1024},
+    }
     p.write_text(yaml.safe_dump(data))
 
     loaded = chat.load_template(p)
@@ -26,7 +27,10 @@ def test_load_template_missing(tmp_path):
 
 def test_save_and_load_memory_roundtrip(tmp_path, capsys):
     mem_file = str(tmp_path / "memory.json")
-    messages = [{"role": "system", "content": "init"}, {"role": "user", "content": "hello"}]
+    messages = [
+        {"role": "system", "content": "init"},
+        {"role": "user", "content": "hello"},
+    ]
 
     # Save first time
     chat.save_memory(messages, memory_file=mem_file)
@@ -34,7 +38,7 @@ def test_save_and_load_memory_roundtrip(tmp_path, capsys):
 
     # Save second time to cause backup
     chat.save_memory(messages, memory_file=mem_file)
-    backup = Path(mem_file).with_suffix('.json.bak')
+    backup = Path(mem_file).with_suffix(".json.bak")
     assert backup.exists()
 
     loaded = chat.load_memory(mem_file)
@@ -47,7 +51,14 @@ def test_load_memory_corrupted_uses_backup(tmp_path, capsys):
     backup = tmp_path / "memory.json.bak"
 
     mem_file.write_text("{ this is not json")
-    backup.write_text(json.dumps({"timestamp": "now", "messages": [{"role": "user", "content": "from backup"}]}))
+    backup.write_text(
+        json.dumps(
+            {
+                "timestamp": "now",
+                "messages": [{"role": "user", "content": "from backup"}],
+            }
+        )
+    )
 
     msgs = chat.load_memory(str(mem_file))
     assert msgs == [{"role": "user", "content": "from backup"}]
@@ -85,7 +96,8 @@ def test_save_memory_failure(monkeypatch, tmp_path):
 
 def test_archive_memory_snapshot_failure(monkeypatch, tmp_path):
     mem_file = tmp_path / "memory.json"
-    mem_file.write_text('{}')
+    mem_file.write_text("{}")
+
     # Make copy2 raise
     def raise_copy(*a, **k):
         raise RuntimeError("copy fail")

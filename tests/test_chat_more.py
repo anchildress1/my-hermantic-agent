@@ -1,5 +1,4 @@
 import json
-import pytest
 from unittest.mock import MagicMock
 from src.agent import chat
 

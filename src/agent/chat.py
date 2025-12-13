@@ -12,25 +12,32 @@ from typing import List, Dict, Tuple, Optional
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_MEMORY_FILE = "data/memory.json"
+DEFAULT_CONTEXT_FILE = "data/memory.json"
 
 
-def setup_logging():
+def setup_logging(debug: bool = False):
     """Setup logging with proper configuration."""
+    import os
+
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
 
+    log_level = (
+        logging.DEBUG
+        if (debug or os.getenv("DEBUG", "").lower() in ("1", "true", "yes"))
+        else logging.INFO
+    )
+
     logging.basicConfig(
-        level=logging.INFO,
+        level=log_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
             logging.FileHandler("logs/ollama_chat.log"),
-            logging.StreamHandler(),  # Also log to console for errors
+            logging.StreamHandler(),
         ],
     )
-    # Set console handler to WARNING and above only
     logging.getLogger().handlers[1].setLevel(logging.WARNING)
-    logger.info("Logging initialized")
+    logger.info(f"Logging initialized at {logging.getLevelName(log_level)} level")
 
 
 def load_template(template_path: Path) -> Dict:
@@ -48,9 +55,14 @@ def load_template(template_path: Path) -> Dict:
         raise
 
 
-def save_memory(messages: List[Dict], memory_file: str = DEFAULT_MEMORY_FILE):
-    """Save conversation history to file with atomic write."""
-    memory_path = Path(memory_file)
+def save_memory(messages: List[Dict], memory_file: str = DEFAULT_CONTEXT_FILE):
+    """Save conversation context to file with atomic write."""
+    save_context(messages, memory_file)
+
+
+def save_context(messages: List[Dict], context_file: str = DEFAULT_CONTEXT_FILE):
+    """Save conversation context to file with atomic write."""
+    memory_path = Path(context_file)
     memory_path.parent.mkdir(parents=True, exist_ok=True)
 
     data = {"timestamp": datetime.now().isoformat(), "messages": messages}
@@ -71,8 +83,8 @@ def save_memory(messages: List[Dict], memory_file: str = DEFAULT_MEMORY_FILE):
 
         # Atomic rename
         shutil.move(tmp_path, memory_path)
-        logger.info(f"Saved {len(messages)} messages to {memory_file}")
-        print(f"💾 Memory saved to {memory_file}")
+        logger.info(f"Saved {len(messages)} messages to {context_file}")
+        print(f"💾 Memory saved to {context_file}")
 
     except Exception as e:
         logger.error(f"Failed to save memory: {e}")
@@ -81,11 +93,16 @@ def save_memory(messages: List[Dict], memory_file: str = DEFAULT_MEMORY_FILE):
         raise
 
 
-def load_memory(memory_file: str = DEFAULT_MEMORY_FILE) -> List[Dict]:
-    """Load conversation history from file."""
-    memory_path = Path(memory_file)
+def load_memory(memory_file: str = DEFAULT_CONTEXT_FILE) -> List[Dict]:
+    """Load conversation context from file."""
+    return load_context(memory_file)
+
+
+def load_context(context_file: str = DEFAULT_CONTEXT_FILE) -> List[Dict]:
+    """Load conversation context from file."""
+    memory_path = Path(context_file)
     if not memory_path.exists():
-        logger.info(f"No existing memory file at {memory_file}")
+        logger.info(f"No existing context file at {context_file}")
         return []
 
     try:
@@ -99,12 +116,12 @@ def load_memory(memory_file: str = DEFAULT_MEMORY_FILE) -> List[Dict]:
         return messages
 
     except json.JSONDecodeError as e:
-        logger.error(f"Corrupted memory file: {e}")
+        logger.error(f"Corrupted context file: {e}")
         # Try to load backup
         backup = memory_path.with_suffix(".json.bak")
         if backup.exists():
             logger.info("Attempting to load from backup")
-            print("⚠️  Memory file corrupted, loading from backup...")
+            print("⚠️  Context file corrupted, loading from backup...")
             with open(backup, "r") as f:
                 data = json.load(f)
             return data.get("messages", [])
@@ -113,13 +130,20 @@ def load_memory(memory_file: str = DEFAULT_MEMORY_FILE) -> List[Dict]:
             print("❌ Memory file corrupted and no backup available")
             return []
     except Exception as e:
-        logger.error(f"Failed to load memory: {e}")
+        logger.error(f"Failed to load context: {e}")
         return []
 
 
 def archive_memory_snapshot(memory_file: str, prefix: str = "clear") -> Optional[Path]:
-    """Archive the current memory file before clearing context."""
-    memory_path = Path(memory_file)
+    """Archive the current context file before clearing."""
+    return archive_context_snapshot(memory_file, prefix)
+
+
+def archive_context_snapshot(
+    context_file: str, prefix: str = "clear"
+) -> Optional[Path]:
+    """Archive the current context file before clearing."""
+    memory_path = Path(context_file)
     if not memory_path.exists():
         return None
 
@@ -129,10 +153,10 @@ def archive_memory_snapshot(memory_file: str, prefix: str = "clear") -> Optional
 
     try:
         shutil.copy2(memory_path, backup_path)
-        logger.info(f"Archived memory before clear: {backup_path}")
+        logger.info(f"Archived context before clear: {backup_path}")
         return backup_path
     except Exception as e:
-        logger.warning(f"Unable to archive memory snapshot: {e}")
+        logger.warning(f"Unable to archive context snapshot: {e}")
         return None
 
 
@@ -154,26 +178,30 @@ def print_help(memory_store: Optional[object]):
     print()
     print(f"{ANSI_BOLD}Commands{ANSI_RESET}")
     print(f"  {ANSI_CYAN}/?{ANSI_RESET}         Show this help")
-    print(f"  {ANSI_CYAN}/quit{ANSI_RESET}      Exit and save")
+    print(f"  {ANSI_CYAN}/quit{ANSI_RESET}        Exit and save")
     print(
-        f"  {ANSI_CYAN}/clear{ANSI_RESET}     Clear conversation (keeps system prompt)"
+        f"  {ANSI_CYAN}/clear{ANSI_RESET}       Clear conversation (keeps system prompt)"
     )
-    print(f"  {ANSI_CYAN}/save{ANSI_RESET}      Save conversation manually")
+    print(f"  {ANSI_CYAN}/save{ANSI_RESET}        Save conversation manually")
     print(
-        f"  {ANSI_CYAN}/load [file]{ANSI_RESET} Load saved memory from JSON (defaults to saved memory)"
+        f"  {ANSI_CYAN}/load [file]{ANSI_RESET} Load saved context from JSON (defaults to saved context)"
     )
-    print(f"  {ANSI_CYAN}/trim{ANSI_RESET}      Trim old messages to fit context")
+    print(f"  {ANSI_CYAN}/trim{ANSI_RESET}        Trim old messages to fit context")
     if memory_store:
         print()
-        print(f"{ANSI_BOLD}Memory Commands{ANSI_RESET}")
-        print(f"  {ANSI_CYAN}/remember <text>{ANSI_RESET}  Store a memory")
-        print(f"  {ANSI_CYAN}/recall <query>{ANSI_RESET}     Search semantic memories")
+        print(f"{ANSI_BOLD}Memory Commands{ANSI_RESET} (cloud PostgreSQL only)")
         print(
-            f"  {ANSI_CYAN}/memories [context]{ANSI_RESET} List recent memories or by context"
+            f"  {ANSI_CYAN}/remember <text>{ANSI_RESET}      Store a memory (supports type=, tag=, importance=, confidence=)"
         )
-        print(f"  {ANSI_CYAN}/forget <id>{ANSI_RESET}      Delete memory by ID")
-        print(f"  {ANSI_CYAN}/contexts{ANSI_RESET}       List memory contexts")
-        print(f"  {ANSI_CYAN}/stats{ANSI_RESET}          Show memory statistics")
+        print(
+            f"  {ANSI_CYAN}/recall <query>{ANSI_RESET}       Search semantic memories"
+        )
+        print(
+            f"  {ANSI_CYAN}/memories [tag]{ANSI_RESET}       List recent memories or by tag"
+        )
+        print(f"  {ANSI_CYAN}/forget <id>{ANSI_RESET}          Delete memory by ID")
+        print(f"  {ANSI_CYAN}/tags{ANSI_RESET}                 List memory tags")
+        print(f"  {ANSI_CYAN}/stats{ANSI_RESET}                Show memory statistics")
     print()
 
 
@@ -278,8 +306,12 @@ def check_ollama_connection(model: str) -> bool:
         return False
 
 
-def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma: no cover
+def chat_loop(
+    template: Dict, context_file: str = DEFAULT_CONTEXT_FILE, memory_file: str = None
+):  # pragma: no cover
     """Run interactive chat loop with Ollama."""
+    if memory_file is None:
+        memory_file = context_file
     model = template.get("model", "llama3.2")
     system_prompt = template.get("system", "")
     params = template.get("parameters", {})
@@ -303,17 +335,16 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma
 
     # Get context window size from params, default to 8192
     max_context = params.get("num_ctx", 8192)
-    # Keep 75% for history, 25% for generation
     max_history_tokens = int(max_context * 0.75)
 
-    memory_path = Path(memory_file)
+    memory_path = Path(context_file)
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
 
     if memory_path.exists():
         print(
-            f"{ANSI_YELLOW}⚠️  Found saved conversation at {memory_file}.{ANSI_RESET} Use {ANSI_CYAN}/load{ANSI_RESET} to restore it."
+            f"{ANSI_YELLOW}⚠️  Found saved conversation at {context_file}.{ANSI_RESET} Use {ANSI_CYAN}/load{ANSI_RESET} to restore it."
         )
 
     print(f"{ANSI_GREEN}🤖 Ollama Chat{ANSI_RESET} — Model: {model}")
@@ -329,8 +360,8 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma
         try:
             user_input = input("\n💬 You: ").strip()
 
-            if user_input.lower() in ["/quit", "/exit", "/bye"]:
-                save_memory(messages, memory_file)
+            if user_input.lower() in ["/bye"]:
+                save_context(messages, context_file)
                 print("Later!")
                 break
 
@@ -347,27 +378,25 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma
                 continue
 
             if user_input == "/clear":
-                archive_path = archive_memory_snapshot(memory_file)
+                archive_path = archive_context_snapshot(context_file)
                 messages = []
                 if system_prompt:
                     messages.append({"role": "system", "content": system_prompt})
-                save_memory(messages, memory_file)
+                save_context(messages, context_file)
                 if archive_path:
                     print(f"📦 Previous conversation archived to {archive_path}")
                 print("🗑️  Context cleared and saved!")
                 continue
 
             if user_input == "/save":
-                save_memory(messages, memory_file)
+                save_context(messages, context_file)
                 continue
 
             if user_input.startswith("/load"):
-                # Support multiple files: /load file1.json file2.json
                 tokens = user_input.split()[1:]
 
-                # If no file specified, load default memory and ensure system prompt
                 if not tokens:
-                    loaded_messages = load_memory(memory_file)
+                    loaded_messages = load_context(context_file)
                     if loaded_messages:
                         messages = loaded_messages
                         if system_prompt:
@@ -378,7 +407,7 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma
                                     0, {"role": "system", "content": system_prompt}
                                 )
                         print(
-                            f"{ANSI_GREEN}🔄 Memory loaded from {memory_file}{ANSI_RESET}"
+                            f"{ANSI_GREEN}🔄 Context loaded from {context_file}{ANSI_RESET}"
                         )
                     else:
                         messages = []
@@ -387,15 +416,14 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma
                                 {"role": "system", "content": system_prompt}
                             )
                         print(
-                            f"{ANSI_YELLOW}⚠️  No saved memory loaded from {memory_file}{ANSI_RESET}"
+                            f"{ANSI_YELLOW}⚠️  No saved context loaded from {context_file}{ANSI_RESET}"
                         )
                     continue
 
-                # User specified one or more files — load them exactly as provided
                 combined: List[Dict] = []
                 any_loaded = False
                 for f in tokens:
-                    loaded = load_memory(f, show_status=False)
+                    loaded = load_context(f)
                     if loaded:
                         combined.extend(loaded)
                         any_loaded = True
@@ -403,13 +431,12 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma
                 if any_loaded:
                     messages = combined
                     print(
-                        f"{ANSI_GREEN}🔄 Memory loaded from: {' '.join(tokens)}{ANSI_RESET}"
+                        f"{ANSI_GREEN}🔄 Context loaded from: {' '.join(tokens)}{ANSI_RESET}"
                     )
                 else:
                     print(
-                        f"{ANSI_YELLOW}⚠️  No saved memory loaded from: {' '.join(tokens)}{ANSI_RESET}"
+                        f"{ANSI_YELLOW}⚠️  No saved context loaded from: {' '.join(tokens)}{ANSI_RESET}"
                     )
-                # When explicit files specified, DO NOT inject or modify system prompt
                 continue
 
             if user_input == "/stream":
@@ -420,7 +447,7 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma
             if user_input == "/trim":
                 messages, was_trimmed = trim_context(messages, max_history_tokens)
                 if was_trimmed:
-                    save_memory(messages, memory_file)
+                    save_context(messages, context_file)
                     print(f"✂️  Context trimmed to {len(messages)} messages")
                 else:
                     print(
@@ -428,31 +455,70 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma
                     )
                 continue
 
-            # Memory commands
             if memory_store:
                 if user_input.startswith("/remember "):
+                    import re
+
                     text = user_input[10:].strip()
                     if not text:
-                        print("Usage: /remember <text>")
+                        print(
+                            "Usage: /remember [type=<type>] [tag=<tag>] [importance=<float>] [confidence=<float>] [source=<src>] <text>"
+                        )
                         continue
 
-                    # Prompt for type and context
-                    print("\nMemory type (preference/fact/task/insight):")
-                    mem_type = input("  Type: ").strip().lower()
+                    params = {}
+                    param_pattern = r"(type|tag|importance|confidence|source)=(\S+)"
+                    matches = re.findall(param_pattern, text)
+
+                    for key, value in matches:
+                        params[key] = value
+                        text = re.sub(
+                            rf"{key}={re.escape(value)}\s*", "", text, count=1
+                        )
+
+                    text = text.strip()
+                    if not text:
+                        print("❌ Memory text cannot be empty")
+                        continue
+
+                    mem_type = params.get("type")
+                    if not mem_type:
+                        print("\nMemory type (preference/fact/task/insight):")
+                        mem_type = input("  Type: ").strip().lower()
+
                     if mem_type not in memory_store.VALID_TYPES:
                         print(
                             f"❌ Invalid type. Must be one of: {memory_store.VALID_TYPES}"
                         )
                         continue
 
-                    print("\nContext (e.g., work, personal, project-name):")
-                    context = input("  Context: ").strip()
-                    if not context:
-                        print("❌ Context cannot be empty")
+                    tag = params.get("tag")
+                    if not tag:
+                        print("\nTag (e.g., work, personal, project-name):")
+                        tag = input("  Tag: ").strip()
+
+                    if not tag:
+                        print("❌ Tag cannot be empty")
                         continue
 
+                    importance = float(params.get("importance", 1.0))
+                    if importance > 2.0:
+                        print(
+                            f"⚠️  High importance ({importance}) - this memory will be prioritized in recall"
+                        )
+
+                    confidence = float(params.get("confidence", 1.0))
+                    source = params.get("source")
+
                     try:
-                        mem_id = memory_store.remember(text, mem_type, context)
+                        mem_id = memory_store.remember(
+                            text,
+                            mem_type,
+                            context=tag,
+                            importance=importance,
+                            confidence=confidence,
+                            source=source,
+                        )
                         if mem_id:
                             print(f"✓ Memory stored with ID {mem_id}")
                         else:
@@ -472,62 +538,68 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma
                         if results:
                             print(f"\n🔍 Found {len(results)} relevant memories:\n")
                             for r in results:
-                                print(
-                                    f"  [{r['id']}] {r['type'].upper()} | {r['context']}"
+                                importance_marker = (
+                                    "🔴"
+                                    if r["importance"] > 2.0
+                                    else "🟡"
+                                    if r["importance"] > 1.0
+                                    else "🟢"
                                 )
-                                print(f"      {r['memory_text']}")
                                 print(
-                                    f"      Similarity: {r['similarity']:.3f} | Accessed: {r['access_count']} times"
+                                    f"  [{r['id']:>4}] {r['type'].upper():<10} | {r['tag']:<20} {importance_marker}"
                                 )
-                                print()
+                                print(f"         {r['memory_text']}")
+                                print(
+                                    f"         Score: {r['similarity']:.3f} | Importance: {r['importance']:.1f} | Accessed: {r['access_count']}x\n"
+                                )
                         else:
-                            print("No memories found")
+                            print("  No memories found")
                     except Exception as e:
                         print(f"❌ Error: {e}")
                     continue
 
                 if user_input.startswith("/memories"):
                     parts = user_input.split(maxsplit=1)
-                    context_filter = parts[1] if len(parts) > 1 else None
+                    tag_filter = parts[1] if len(parts) > 1 else None
 
                     try:
                         results = (
                             memory_store.recall(
                                 query="",
-                                context=context_filter,
+                                tag=tag_filter,
                                 limit=10,
                                 use_semantic=False,
                             )
-                            if context_filter
+                            if tag_filter
                             else []
                         )
 
-                        # If no filter, get recent memories via stats
-                        if not context_filter:
-                            # Just show stats instead
+                        if not tag_filter:
                             stats = memory_store.stats()
                             if stats:
                                 print("\n📊 Memory Statistics:")
-                                print(f"  Total memories: {stats['total_memories']}")
-                                print(f"  Unique types: {stats['unique_types']}")
-                                print(f"  Unique contexts: {stats['unique_contexts']}")
+                                print(f"  Total memories:   {stats['total_memories']}")
+                                print(f"  Unique types:     {stats['unique_types']}")
+                                print(f"  Unique tags:      {stats['unique_tags']}")
                                 print(
-                                    f"  Avg confidence: {stats['avg_confidence']:.2f}"
+                                    f"  Avg importance:   {stats['avg_importance']:.2f}"
                                 )
-                                print(f"  Last memory: {stats['last_memory_at']}")
+                                print(
+                                    f"  Avg confidence:   {stats['avg_confidence']:.2f}"
+                                )
+                                print(
+                                    f"  Last memory:      {stats['last_memory_at']}\n"
+                                )
                             else:
-                                print("No memories stored yet")
+                                print("  No memories stored yet")
                         else:
                             if results:
-                                print(f"\n📋 Memories in context '{context_filter}':\n")
+                                print(f"\n📋 Memories with tag '{tag_filter}':\n")
                                 for r in results:
-                                    print(f"  [{r['id']}] {r['type'].upper()}")
-                                    print(f"      {r['memory_text'][:80]}...")
-                                    print()
+                                    print(f"  [{r['id']:>4}] {r['type'].upper():<10}")
+                                    print(f"         {r['memory_text'][:80]}...\n")
                             else:
-                                print(
-                                    f"No memories found in context '{context_filter}'"
-                                )
+                                print(f"  No memories found with tag '{tag_filter}'")
                     except Exception as e:
                         print(f"❌ Error: {e}")
                     continue
@@ -545,16 +617,16 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma
                         print(f"❌ Error: {e}")
                     continue
 
-                if user_input == "/contexts":
+                if user_input == "/tags":
                     try:
-                        contexts = memory_store.list_contexts()
-                        if contexts:
-                            print(f"\n📁 Available contexts ({len(contexts)}):")
-                            for ctx in contexts:
-                                print(f"  - {ctx}")
+                        tags = memory_store.list_tags()
+                        if tags:
+                            print(f"\n📁 Available tags ({len(tags)}):")
+                            for t in tags:
+                                print(f"  • {t}")
                             print()
                         else:
-                            print("No contexts found")
+                            print("  No tags found")
                     except Exception as e:
                         print(f"❌ Error: {e}")
                     continue
@@ -564,14 +636,14 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma
                         stats = memory_store.stats()
                         if stats:
                             print("\n📊 Memory Statistics:")
-                            print(f"  Total memories: {stats['total_memories']}")
-                            print(f"  Unique types: {stats['unique_types']}")
-                            print(f"  Unique contexts: {stats['unique_contexts']}")
-                            print(f"  Avg confidence: {stats['avg_confidence']:.2f}")
-                            print(f"  Last memory: {stats['last_memory_at']}")
-                            print()
+                            print(f"  Total memories:   {stats['total_memories']}")
+                            print(f"  Unique types:     {stats['unique_types']}")
+                            print(f"  Unique tags:      {stats['unique_tags']}")
+                            print(f"  Avg importance:   {stats['avg_importance']:.2f}")
+                            print(f"  Avg confidence:   {stats['avg_confidence']:.2f}")
+                            print(f"  Last memory:      {stats['last_memory_at']}\n")
                         else:
-                            print("Failed to retrieve stats")
+                            print("  Failed to retrieve stats")
                     except Exception as e:
                         print(f"❌ Error: {e}")
                     continue
@@ -579,7 +651,6 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma
             if not user_input:
                 continue
 
-            # Check if we need to trim context before adding new message
             current_tokens = count_message_tokens(messages)
             if current_tokens > max_history_tokens:
                 messages, was_trimmed = trim_context(messages, max_history_tokens)
@@ -587,7 +658,7 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma
                     print(
                         f"✂️  Auto-trimmed context to fit within {max_history_tokens} tokens"
                     )
-                    save_memory(messages, memory_file)
+                    save_context(messages, context_file)
 
             # Add user message to history
             messages.append({"role": "user", "content": user_input})
@@ -655,7 +726,7 @@ def chat_loop(template: Dict, memory_file: str = DEFAULT_MEMORY_FILE):  # pragma
 
         except KeyboardInterrupt:
             print("\n\nSaving before exit...")
-            save_memory(messages, memory_file)
+            save_context(messages, context_file)
             if memory_store:
                 memory_store.close()
             print("Goodbye!")

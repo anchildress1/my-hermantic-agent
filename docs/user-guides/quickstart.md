@@ -172,8 +172,8 @@ ______________________________________________________________________
 
 ## Next Steps
 
-- Read [README.md](README.md) for detailed documentation
-- Check [docs/MEMORY_API.md](docs/MEMORY_API.md) for API reference
+- Read [README.md](../../README.md) for detailed documentation
+- Check [docs/agent-memory.md](../../docs/agent-memory.md) for API reference
 - Customize `config/template.yaml` for different models/prompts
 - Run tests: `make test`
 
@@ -194,5 +194,3 @@ ______________________________________________________________________
 - Check logs: `make logs`
 - Run tests: `make test`
 - See all commands: `make help`
-- Read the analysis: [ANALYSIS.md](ANALYSIS.md)
-- Implementation details: [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)

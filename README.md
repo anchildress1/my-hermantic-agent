@@ -26,7 +26,7 @@ make setup-db
 make run
 ```
 
-**Full setup guide:** [QUICKSTART.md](QUICKSTART.md)
+**Full setup guide:** [QUICKSTART.md](docs/user-guides/quickstart.md)
 
 ______________________________________________________________________
 
@@ -55,17 +55,17 @@ graph TB
     Memory --> TimescaleDB[(TimescaleDB + pgvector)]
 ```
 
-**Detailed diagrams:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+**Detailed diagrams:** [docs/ARCHITECTURE.md](docs/system-architecture.md)
 
 ______________________________________________________________________
 
 ## Documentation
 
-- 📖 **[User Guide](docs/USER_GUIDE.md)** - How to use the agent effectively
-- 🏗️ **[Architecture](docs/ARCHITECTURE.md)** - System design and data flow
-- 🎛️ **[Model Parameters](docs/MODEL_PARAMETERS.md)** - Hermes-4 configuration guide
-- 🔧 **[Memory API](docs/MEMORY_API.md)** - Semantic memory reference
-- 🚀 **[Quick Start](QUICKSTART.md)** - 5-minute setup guide
+- 📖 **[User Guide](docs/user-guides/project-overview.md)** - How to use the agent effectively
+- 🏗️ **[Architecture](docs/system-architecture.md)** - System design and data flow
+- 🎛️ **[Model Parameters](docs/model-parameter-options.md)** - Hermes-4 configuration guide
+- 🔧 **[Memory API](docs/agent-memory.md)** - Semantic memory reference
+- 🚀 **[Quick Start](docs/user-guides/quickstart.md)** - 5-minute setup guide
 
 ______________________________________________________________________
 
@@ -107,7 +107,7 @@ Context: coding
 📊 Total memories: 42 | Contexts: 3 | Types: 4
 ```
 
-**Full command reference:** [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
+**Full command reference:** [docs/USER_GUIDE.md](docs/user-guides/project-overview.md)
 
 ______________________________________________________________________
 
@@ -195,7 +195,7 @@ parameters:
   # ... more parameters
 ```
 
-**Parameter guide:** [docs/MODEL_PARAMETERS.md](docs/MODEL_PARAMETERS.md)
+**Parameter guide:** [docs/MODEL_PARAMETERS.md](docs/model-parameter-options.md)
 
 ### Environment Variables
 

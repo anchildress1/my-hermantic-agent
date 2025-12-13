@@ -37,8 +37,11 @@ format:
 	uv run mdformat .
 
 lint:
-	uv run ruff check . --fix
+	uv run ruff check .
 	uv run mdformat --check .
+
+ai-checks: clean setup install format lint test coverage
+	@echo "Running AI checks: lint + tests"
 
 test:
 	uv run pytest tests/ -v

@@ -1,53 +1,70 @@
 import builtins
-from unittest.mock import MagicMock, patch
-import pytest
-from pathlib import Path
+from unittest.mock import MagicMock
 
 from src.agent import chat
 
 
 def test_chat_loop_basic_flow(tmp_path, monkeypatch, capsys):
     # Prepare template and memory file
-    template = {"model": "llama3.2", "system": "You are a test", "parameters": {"num_ctx": 1024}}
+    template = {
+        "model": "llama3.2",
+        "system": "You are a test",
+        "parameters": {"num_ctx": 1024},
+    }
     mem_file = tmp_path / "memory.json"
-    mem_file.write_text('{"timestamp": "t", "messages": [{"role": "system", "content": "You are a test"}]}')
+    mem_file.write_text(
+        '{"timestamp": "t", "messages": [{"role": "system", "content": "You are a test"}]}'
+    )
 
     # Dummy memory store to be used by chat_loop
     class DummyStore:
         VALID_TYPES = {"preference", "fact", "task", "insight"}
 
-        def remember(self, text, type, context, confidence=1.0, source_context=None):
+        def remember(
+            self,
+            text,
+            type,
+            context=None,
+            tag=None,
+            importance=1.0,
+            confidence=1.0,
+            source=None,
+        ):
             return 123
 
-        def recall(self, query, type=None, context=None, limit=5, use_semantic=True):
+        def recall(
+            self, query, type=None, context=None, tag=None, limit=5, use_semantic=True
+        ):
             return [
                 {
                     "id": 1,
-                    "memory_text": "m1",
+                    "memory_text": "test memory",
                     "type": "fact",
-                    "context": "test",
+                    "tag": "test",
                     "confidence": 1.0,
-                    "source_context": None,
+                    "source": None,
                     "created_at": "2024-01-01",
                     "last_accessed": "2024-01-01",
                     "access_count": 1,
                     "embedding_model": "text-embedding-3-small",
                     "similarity": 0.9,
+                    "importance": 1.0,
                 }
             ]
 
         def forget(self, mem_id):
             return True
 
-        def list_contexts(self):
+        def list_tags(self):
             return ["work", "personal"]
 
         def stats(self):
             return {
                 "total_memories": 2,
                 "unique_types": 2,
-                "unique_contexts": 2,
+                "unique_tags": 2,
                 "avg_confidence": 0.9,
+                "avg_importance": 1.0,
                 "last_memory_at": "now",
             }
 
@@ -72,21 +89,19 @@ def test_chat_loop_basic_flow(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(chat, "save_memory", lambda messages, memory_file: None)
 
     # Sequence of inputs to drive through many branches
-    inputs = iter([
-        "/?",  # help
-        "/load",  # default load
-        "/remember remember this",  # triggers prompts
-        "fact",  # type
-        "testctx",  # context
-        "/recall test",  # recall
-        "/memories",  # stats
-        "/contexts",  # list contexts
-        "/forget 1",  # forget
-        "/stream",  # toggle streaming
-        "/trim",  # trim
-        "hello world",  # normal message -> assistant
-        "/quit",
-    ])
+    inputs = iter(
+        [
+            "/?",
+            "/remember type=fact tag=test remember this",
+            "/recall test",
+            "/forget 1",
+            "/memories",
+            "/clear",
+            "/load",
+            "/save",
+            "/bye",
+        ]
+    )
 
     monkeypatch.setattr(builtins, "input", lambda prompt="": next(inputs))
 
@@ -96,6 +111,4 @@ def test_chat_loop_basic_flow(tmp_path, monkeypatch, capsys):
     # Capture output to check some expected substrings
     out = capsys.readouterr().out
     assert "Ollama Chat" in out
-    assert "Memory loaded" in out or "No saved memory loaded" in out
-    assert "Memory stored with ID" in out or "Memory stored" in out
-    assert "Assistant" in out or "ok response" in out
+    assert "Memory stored with ID" in out

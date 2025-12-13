@@ -1,6 +1,5 @@
 import pytest
 from unittest.mock import MagicMock, patch
-import os
 
 
 def make_store(monkeypatch):

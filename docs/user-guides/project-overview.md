@@ -39,10 +39,21 @@ Simply type your message and press Enter:
 
 ### Exiting
 
-Type `quit`, `exit`, or press `Ctrl+C`:
+Type `/bye` or press `Ctrl+C`:
 
-- Conversation auto-saves to `data/memory.json`
+- Conversation context auto-saves to `data/memory.json`
 - Next time you start, it continues where you left off
+
+______________________________________________________________________
+
+## Terminology
+
+**CONTEXT** vs **MEMORY**:
+
+- **CONTEXT**: Local JSON conversation history (`data/memory.json`) managed by `/save`, `/load`, `/clear`
+- **MEMORY**: Cloud PostgreSQL semantic embeddings managed by `/remember`, `/recall`, `/forget`, `/stats`
+
+These are separate systems serving different purposes.
 
 ______________________________________________________________________
 
@@ -58,14 +69,13 @@ ______________________________________________________________________
 ### Manage History
 
 ```bash
-/clear   # Clear conversation (keeps system prompt)
-/save    # Manually save conversation
-/load    # Load most recently saved context or file specified
-/load    # Reload from saved file
+/clear   # Clear conversation context (keeps system prompt)
+/save    # Manually save conversation context
+/load    # Load saved context from JSON (defaults to data/memory.json)
 /trim    # Manually trim old messages
 ```
 
-> ✅ The previous conversation is archived to `data/memory-clear-<timestamp>.json` each time `/clear` runs, so you can inspect or restore the cleared context later if needed.
+> ✅ The previous conversation is archived to `data/memory-clear-<timestamp>.json` each time `/clear` runs.
 
 ### Toggle Features
 
@@ -77,15 +87,29 @@ ______________________________________________________________________
 
 ## Memory Commands
 
+Store semantic memories in cloud PostgreSQL (separate from conversation context).
+
+### Quick Syntax
+
 ```bash
-💬 You: /remember I prefer Python over JavaScript
+# Inline parameters
+/remember type=preference context=coding confidence=0.9 I prefer Python over JavaScript
 
-Memory type (preference/fact/task/insight):
-  Type: preference
+# Interactive prompts
+/remember I prefer Python over JavaScript
+```
 
-Context (e.g., work, personal, project-name):
-  Context: coding
+**Parameters:**
 
+- `type=` - preference, fact, task, insight
+- `context=` - work, personal, project-name, etc.
+- `confidence=` - 0.0 to 1.0 (default: 1.0)
+- `source=` - optional source context
+
+### Example
+
+```bash
+💬 You: /remember type=preference context=coding I prefer Python over JavaScript
 ✓ Memory stored with ID 1
 ```
 
@@ -220,9 +244,9 @@ ______________________________________________________________________
 
 ### "Semantic memory unavailable"
 
-- Check `.env` has `MEMORY_DB_URL`
+- Check `.env` has `MEMORY_DB_URL` and `OPENAI_API_KEY`
 - Run `make setup-db` to initialize database
-- Agent still works without semantic memory (conversation history only)
+- Agent still works without semantic memory (conversation context only)
 
 ### "Context nearly full"
 
@@ -301,7 +325,7 @@ ______________________________________________________________________
 1. **Store atomic memories** - One fact per memory
 1. **Regular cleanup** - Delete outdated tasks
 1. **Check stats** - Monitor memory growth
-1. **Backup** - `data/memory.json` and database
+1. **Backup** - Cloud database + local `data/memory.json` context
 
 ______________________________________________________________________
 

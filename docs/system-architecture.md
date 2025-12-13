@@ -5,7 +5,12 @@ Hermes Agent architecture and data flow diagrams.
 ## System Architecture
 
 ```mermaid
-%%{init: {'theme':'base', 'lightTheme':'base', 'darkTheme':'dark', 'securityLevel':'strict', 'accessibility': {'label': 'System Architecture', 'description': 'System architecture and data flow; supports light/dark modes.'}}}%%
+---
+config:
+  accessibility:
+    - label: System Architecture
+    - description: System architecture and data flow
+---
 graph TB
     subgraph "User Interface"
         CLI[CLI Chat Interface]
@@ -48,7 +53,12 @@ graph TB
 ## Data Flow
 
 ```mermaid
-%%{init: {'theme':'base', 'lightTheme':'base', 'darkTheme':'dark', 'securityLevel':'strict', 'accessibility': {'label': 'Data Flow', 'description': 'Sequence diagram showing message flow; supports light/dark modes.'}}}%%
+---
+config:
+  accessibility:
+    - label: Data Flow
+    - description: Sequence diagram showing message flow
+---
 sequenceDiagram
     participant User
     participant Chat
@@ -90,7 +100,12 @@ sequenceDiagram
 ## Memory System
 
 ```mermaid
-%%{init: {'theme':'base', 'lightTheme':'base', 'darkTheme':'dark', 'securityLevel':'strict', 'accessibility': {'label': 'Dual Memory Architecture', 'description': 'Dual memory diagram showing short-term and long-term memory.'}}}%%
+---
+config:
+  accessibility:
+    - label: Dual Memory Architecture
+    - description: Dual memory diagram showing short-term and long-term memory
+---
 graph LR
     subgraph "Dual Memory Architecture"
         subgraph "Short-term Memory"
@@ -120,7 +135,12 @@ graph LR
 ## Component Responsibilities
 
 ```mermaid
-%%{init: {'theme':'base', 'lightTheme':'base', 'darkTheme':'dark', 'securityLevel':'strict', 'accessibility': {'label': 'Component Responsibilities', 'description': 'Diagram describing component responsibilities across modules.'}}}%%
+---
+config:
+  accessibility:
+    - label: Component Responsibilities
+    - description: Diagram describing component responsibilities across modules
+---
 graph TD
     subgraph "main.py"
         A1[Environment Validation]
@@ -161,7 +181,12 @@ graph TD
 ## Error Handling Flow
 
 ```mermaid
-%%{init: {'theme':'base', 'lightTheme':'base', 'darkTheme':'dark', 'securityLevel':'strict', 'accessibility': {'label': 'Error Handling Flow', 'description': 'Error handling and retry flow; supports light/dark modes.'}}}%%
+---
+config:
+  accessibility:
+    - label: Error Handling Flow
+    - description: Error handling and retry flow
+---
 graph TD
     Start[Operation Start] --> Try{Try Operation}
     Try -->|Success| Log1[Log Success]
@@ -189,7 +214,12 @@ graph TD
 ## Technology Stack
 
 ```mermaid
-%%{init: {'theme':'base', 'lightTheme':'base', 'darkTheme':'dark', 'securityLevel':'strict', 'accessibility': {'label': 'Technology Stack', 'description': 'Tech stack components and their relationships; supports light/dark modes.'}}}%%
+---
+config:
+  accessibility:
+    - label: Technology Stack
+    - description: Tech stack components and their relationships
+---
 graph LR
     subgraph "Frontend"
         CLI[CLI Interface<br/>Python]

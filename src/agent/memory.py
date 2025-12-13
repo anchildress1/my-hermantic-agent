@@ -116,11 +116,21 @@ class MemoryStore:
 
     def _get_embedding(self, text: str) -> List[float]:
         """Generate embedding for text using OpenAI with error handling."""
+        logger.debug(
+            f"OpenAI embedding request: model={self.embedding_model}, input_length={len(text)}, preview={text[:100]}..."
+        )
+
         try:
             response = self.openai_client.embeddings.create(
                 model=self.embedding_model, input=text, timeout=30.0
             )
-            return response.data[0].embedding
+            embedding = response.data[0].embedding
+
+            logger.debug(
+                f"OpenAI embedding response: dimensions={len(embedding)}, first_5_values={embedding[:5]}, tokens_used={response.usage.total_tokens}"
+            )
+
+            return embedding
         except RateLimitError as e:
             logger.error(f"OpenAI rate limit exceeded: {e}")
             raise Exception("OpenAI rate limit exceeded. Please try again later.")
@@ -139,9 +149,11 @@ class MemoryStore:
         self,
         memory_text: str,
         type: str,
-        context: str,
+        context: Optional[str] = None,
+        importance: float = 1.0,
         confidence: float = 1.0,
-        source_context: Optional[str] = None,
+        source: Optional[str] = None,
+        tag: Optional[str] = None,
     ) -> Optional[int]:
         """
         Store a new memory.
@@ -149,13 +161,18 @@ class MemoryStore:
         Args:
             memory_text: The distilled memory bullet point
             type: Memory type (preference, fact, task, insight)
-            context: Context tag (project name, work, personal, etc)
+            context: Tag for organization (project name, work, personal, etc)
+            importance: Importance score 0.0-3.0 (0=low, 3=high)
             confidence: Confidence score 0-1
-            source_context: Brief snippet of what triggered this
+            source: Brief snippet of what triggered this
+            tag: Deprecated alias for context
 
         Returns:
             Memory ID on success, None on failure
         """
+        if tag is not None and context is None:
+            context = tag
+
         # Input validation
         if not memory_text or not memory_text.strip():
             raise ValueError("memory_text cannot be empty")
@@ -169,39 +186,52 @@ class MemoryStore:
         if not 0 <= confidence <= 1:
             raise ValueError("confidence must be between 0 and 1")
 
+        if not 0 <= importance <= 3:
+            raise ValueError("importance must be between 0 and 3")
+
         if not context or not context.strip():
             raise ValueError("context cannot be empty")
 
         conn = None
         try:
             embedding = self._get_embedding(memory_text)
+            logger.debug(
+                f"Generated embedding for storage: text_length={len(memory_text)}, embedding_dims={len(embedding)}, type={type}, tag={tag}"
+            )
+
             conn = self._get_connection()
 
             with conn.cursor() as cur:
-                # Set ivfflat probes for better accuracy
                 cur.execute("SET ivfflat.probes = 20")
 
                 cur.execute(
                     """
-                    INSERT INTO agent_memories
-                    (memory_text, type, context, confidence, source_context, embedding, embedding_model)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO hermes.memories
+                    (memory_text, type, tag, importance, confidence, source, embedding, embedding_model, embedding_dim)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """,
                     (
                         memory_text,
                         type,
                         context,
+                        importance,
                         confidence,
-                        source_context,
+                        source,
                         embedding,
                         self.embedding_model,
+                        self.embedding_dim,
                     ),
                 )
 
                 memory_id = cur.fetchone()[0]
                 conn.commit()
+
                 logger.info(f"Stored memory {memory_id}: {memory_text[:50]}...")
+                logger.debug(
+                    f"Database insert confirmed: id={memory_id}, type={type}, tag={context}, confidence={confidence}, embedding_model={self.embedding_model}"
+                )
+
                 return memory_id
 
         except psycopg2.OperationalError as e:
@@ -227,8 +257,10 @@ class MemoryStore:
         query: str,
         type: Optional[str] = None,
         context: Optional[str] = None,
+        min_importance: Optional[float] = None,
         limit: int = 5,
         use_semantic: bool = True,
+        tag: Optional[str] = None,
     ) -> List[Dict]:
         """
         Retrieve relevant memories.
@@ -237,12 +269,17 @@ class MemoryStore:
             query: Search query
             type: Filter by memory type
             context: Filter by context (supports LIKE patterns)
+            min_importance: Filter by minimum importance score
             limit: Max results to return
             use_semantic: Use semantic search (True) or full-text (False)
+            tag: Deprecated alias for context
 
         Returns:
             List of memory dicts with similarity scores
         """
+        if tag is not None and context is None:
+            context = tag
+
         # Input validation
         if not query or not query.strip():
             raise ValueError("query cannot be empty")
@@ -258,30 +295,32 @@ class MemoryStore:
             conn = self._get_connection()
 
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Set ivfflat probes
                 cur.execute("SET ivfflat.probes = 20")
 
                 if use_semantic:
                     query_embedding = self._get_embedding(query)
+                    logger.debug(
+                        f"Semantic search: query_length={len(query)}, query_preview={query[:50]}..., embedding_dims={len(query_embedding)}"
+                    )
 
                     sql = """
                         SELECT
-                            id, memory_text, type, context, confidence,
-                            source_context, created_at, last_accessed, access_count,
+                            id, memory_text, type, tag, importance, confidence,
+                            source, created_at, last_accessed, access_count,
                             embedding_model,
-                            1 - (embedding <=> %s::vector) as similarity
-                        FROM agent_memories
+                            (1 - (embedding <=> %s::vector)) * (1 + (importance / 3.0)) as similarity
+                        FROM hermes.memories
                         WHERE 1=1
                     """
                     params = [query_embedding]
                 else:
                     sql = """
                         SELECT
-                            id, memory_text, type, context, confidence,
-                            source_context, created_at, last_accessed, access_count,
+                            id, memory_text, type, tag, importance, confidence,
+                            source, created_at, last_accessed, access_count,
                             embedding_model,
-                            ts_rank(to_tsvector('english', memory_text), plainto_tsquery('english', %s)) as similarity
-                        FROM agent_memories
+                            ts_rank(to_tsvector('english', memory_text), plainto_tsquery('english', %s)) * (1 + (importance / 3.0)) as similarity
+                        FROM hermes.memories
                         WHERE to_tsvector('english', memory_text) @@ plainto_tsquery('english', %s)
                     """
                     params = [query, query]
@@ -292,10 +331,14 @@ class MemoryStore:
 
                 if context:
                     if "%" in context:
-                        sql += " AND context LIKE %s"
+                        sql += " AND tag LIKE %s"
                     else:
-                        sql += " AND context = %s"
+                        sql += " AND tag = %s"
                     params.append(context)
+
+                if min_importance is not None:
+                    sql += " AND importance >= %s"
+                    params.append(min_importance)
 
                 sql += " ORDER BY similarity DESC LIMIT %s"
                 params.append(limit)
@@ -308,7 +351,7 @@ class MemoryStore:
                     memory_ids = [r["id"] for r in results]
                     cur.execute(
                         """
-                        UPDATE agent_memories
+                        UPDATE hermes.memories
                         SET last_accessed = NOW(), access_count = access_count + 1
                         WHERE id = ANY(%s)
                     """,
@@ -340,7 +383,7 @@ class MemoryStore:
         try:
             conn = self._get_connection()
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM agent_memories WHERE id = %s", (memory_id,))
+                cur.execute("DELETE FROM hermes.memories WHERE id = %s", (memory_id,))
                 conn.commit()
                 deleted = cur.rowcount > 0
                 if deleted:
@@ -364,21 +407,23 @@ class MemoryStore:
 
     def list_contexts(self) -> List[str]:
         """Get all unique contexts."""
+        return self.list_tags()
+
+    def list_tags(self) -> List[str]:
+        """Get all unique tags."""
         conn = None
         try:
             conn = self._get_connection()
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT DISTINCT context FROM agent_memories ORDER BY context"
-                )
-                contexts = [row[0] for row in cur.fetchall()]
-                logger.debug(f"Found {len(contexts)} unique contexts")
-                return contexts
+                cur.execute("SELECT DISTINCT tag FROM hermes.memories ORDER BY tag")
+                tags = [row[0] for row in cur.fetchall()]
+                logger.debug(f"Found {len(tags)} unique tags")
+                return tags
         except psycopg2.Error as e:
-            logger.error(f"Database error listing contexts: {e}")
+            logger.error(f"Database error listing tags: {e}")
             return []
         except Exception as e:
-            logger.error(f"Unexpected error listing contexts: {e}")
+            logger.error(f"Unexpected error listing tags: {e}")
             return []
         finally:
             if conn:
@@ -394,10 +439,11 @@ class MemoryStore:
                     SELECT
                         COUNT(*) as total_memories,
                         COUNT(DISTINCT type) as unique_types,
-                        COUNT(DISTINCT context) as unique_contexts,
+                        COUNT(DISTINCT tag) as unique_tags,
                         AVG(confidence) as avg_confidence,
+                        AVG(importance) as avg_importance,
                         MAX(created_at) as last_memory_at
-                    FROM agent_memories
+                    FROM hermes.memories
                 """)
                 stats = dict(cur.fetchone())
                 logger.debug(f"Memory stats: {stats}")

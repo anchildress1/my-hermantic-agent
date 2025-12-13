@@ -14,6 +14,7 @@ load_dotenv()
 def main():
     """Initialize the database schema."""
     db_url = os.getenv("MEMORY_DB_URL")
+    app_password = os.getenv("HERMES_APP_PASSWORD", "hermes_app_password")
 
     if not db_url:
         print("❌ MEMORY_DB_URL not set in .env file")
@@ -23,7 +24,7 @@ def main():
         )
         return 1
 
-    schema_file = Path("schema/init.sql")
+    schema_file = Path("schema/000-init.sql")
     if not schema_file.exists():
         print(f"❌ Schema file not found: {schema_file}")
         return 1
@@ -31,6 +32,9 @@ def main():
     print(f"📋 Reading schema from {schema_file}")
     with open(schema_file, "r") as f:
         schema_sql = f.read()
+
+    # Replace placeholder password with env var
+    schema_sql = schema_sql.replace("hermes_app_password_placeholder", app_password)
 
     print("🔌 Connecting to database...")
     try:
@@ -45,25 +49,25 @@ def main():
 
             # Verify tables exist
             cur.execute("""
-                SELECT table_name 
-                FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'agent_memories'
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'hermes'
+                AND table_name = 'memories'
             """)
 
             if cur.fetchone():
-                print("✓ agent_memories table created")
+                print("✓ memories table created")
 
                 # Check for indexes
                 cur.execute("""
-                    SELECT indexname 
-                    FROM pg_indexes 
-                    WHERE tablename = 'agent_memories'
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'memories'
                 """)
                 indexes = [row[0] for row in cur.fetchall()]
                 print(f"✓ Created {len(indexes)} indexes: {', '.join(indexes)}")
             else:
-                print("⚠️  Warning: agent_memories table not found")
+                print("⚠️  Warning: memories table not found")
 
         conn.close()
         print("\n✅ Database setup complete!")

@@ -23,7 +23,9 @@ def test_init_pool_raises(monkeypatch):
     monkeypatch.setenv("MEMORY_DB_URL", "postgresql://x")
 
     # Make SimpleConnectionPool raise psycopg2.Error
-    with patch("src.agent.memory.pool.SimpleConnectionPool", side_effect=psycopg2.Error("boom")):
+    with patch(
+        "src.agent.memory.pool.SimpleConnectionPool", side_effect=psycopg2.Error("boom")
+    ):
         from importlib import reload
         import src.agent.memory as memmod
 
@@ -48,6 +50,7 @@ def test_get_embedding_success(monkeypatch):
     class Resp:
         def __init__(self):
             self.data = [MagicMock(embedding=[0.2, 0.3])]
+            self.usage = MagicMock(total_tokens=10)
 
     store.openai_client.embeddings.create = MagicMock(return_value=Resp())
     emb = store._get_embedding("hello")

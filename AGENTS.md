@@ -50,6 +50,7 @@ This document defines the coding standards, architectural patterns, and context 
 - **Tiger MCP:** should be used whenever database changes are required
 - **SQL:** Write raw SQL in `src/` is acceptable but prefer parameterized queries to prevent injection.
 - **Connections:** Manage connections using context managers (`with conn: ...`) to ensure closure.
+- **Credentials:** Always check the root `.env` file for database credentials and API keys before prompting the user. The `MEMORY_DB_URL` variable contains the full connection string for the Tiger Cloud database.
 
 ## 4. Project Structure
 
@@ -72,6 +73,7 @@ When generating code or answering questions:
    - No integration tests required at this time.
 1. **Brevity:** Provide concise explanations. Focus on the code solution.
 1. **Pathing:** Assume the workspace root is the current working directory.
+1. **Documentation:** All documentation in this repository should be written based on AI agent chat functionality, describing chat commands and workflows rather than programmatic APIs.
 
 ## 6. Common Tasks
 
