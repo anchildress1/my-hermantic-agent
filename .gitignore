@@ -35,8 +35,7 @@ logs
 Thumbs.db
 
 # Tests
-.coverage
-htmlcov/
+coverage/
 
 
 # Environment

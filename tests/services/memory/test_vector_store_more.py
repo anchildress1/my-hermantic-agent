@@ -12,9 +12,9 @@ def make_store(monkeypatch):
             self.embeddings = MagicMock()
 
     # Patch SimpleConnectionPool and OpenAI during instantiation
-    with patch("src.agent.memory.pool.SimpleConnectionPool"):
-        with patch("src.agent.memory.OpenAI", DummyOpenAI):
-            from src.agent.memory import MemoryStore
+    with patch("src.services.memory.vector_store.pool.SimpleConnectionPool"):
+        with patch("src.services.memory.vector_store.OpenAI", DummyOpenAI):
+            from src.services.memory.vector_store import MemoryStore
 
             return MemoryStore()
 
@@ -23,9 +23,9 @@ def test_memory_init_missing_env(monkeypatch):
     # No env vars set
     monkeypatch.delenv("MEMORY_DB_URL", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    import src.agent.memory as memmod
+    import src.services.memory.vector_store as memmod
 
-    with patch("src.agent.memory.pool.SimpleConnectionPool"):
+    with patch("src.services.memory.vector_store.pool.SimpleConnectionPool"):
         with pytest.raises(ValueError):
             memmod.MemoryStore()
 

@@ -2,7 +2,7 @@
 
 import pytest
 from unittest.mock import MagicMock, patch
-from src.agent.memory import MemoryStore
+from src.services.memory.vector_store import MemoryStore
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def mock_db_connection():
 @pytest.fixture
 def mock_openai():
     """Mock OpenAI client."""
-    with patch("src.agent.memory.OpenAI") as mock:
+    with patch("src.services.memory.vector_store.OpenAI") as mock:
         client = MagicMock()
         mock.return_value = client
         # Mock embedding response
@@ -37,7 +37,7 @@ def store(mock_openai):
             "MEMORY_DB_URL": "postgresql://test:test@localhost/test",
         },
     ):
-        with patch("src.agent.memory.pool.SimpleConnectionPool"):
+        with patch("src.services.memory.vector_store.pool.SimpleConnectionPool"):
             return MemoryStore()
 
 

@@ -296,7 +296,7 @@ Context: project-beta
 
 ```python
 # Python script to bulk import memories
-from src.agent.memory import MemoryStore
+from src.services.memory.vector_store import MemoryStore
 
 store = MemoryStore()
 

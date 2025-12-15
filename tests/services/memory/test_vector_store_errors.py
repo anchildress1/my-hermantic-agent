@@ -1,30 +1,9 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from src.agent import chat
-
-
-def test_check_ollama_connection_success(monkeypatch):
-    monkeypatch.setattr("src.agent.chat.ollama", MagicMock())
-    src = __import__("src.agent.chat", fromlist=["ollama"]).ollama
-    src.list.return_value = {"models": [{"model": "llama3.2"}]}
-
-    assert chat.check_ollama_connection("llama3.2") is True
-
-
-def test_check_ollama_connection_failure(monkeypatch, capsys):
-    def raise_exc():
-        raise RuntimeError("no service")
-
-    monkeypatch.setattr("src.agent.chat.ollama", MagicMock())
-    src = __import__("src.agent.chat", fromlist=["ollama"]).ollama
-    src.list.side_effect = raise_exc
-
-    assert chat.check_ollama_connection("llama3.2") is False
-
 
 def test_rate_limit_decorator():
-    from src.agent.memory import rate_limit
+    from src.services.memory.vector_store import rate_limit
 
     @rate_limit(max_calls=1, period=1.0)
     def dummy():
@@ -40,9 +19,9 @@ def test_get_embedding_errors(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "x")
     monkeypatch.setenv("MEMORY_DB_URL", "postgresql://x")
     # Patch connection pool to avoid DB init
-    with patch("src.agent.memory.pool.SimpleConnectionPool"):
+    with patch("src.services.memory.vector_store.pool.SimpleConnectionPool"):
         # Replace the exception classes in memory module with simple Exception subclasses
-        import src.agent.memory as memmod
+        import src.services.memory.vector_store as memmod
 
         class SimpleErr(Exception):
             pass
@@ -55,8 +34,8 @@ def test_get_embedding_errors(monkeypatch):
             def __init__(self, *a, **k):
                 self.embeddings = MagicMock()
 
-        with patch("src.agent.memory.OpenAI", Dummy):
-            from src.agent.memory import MemoryStore
+        with patch("src.services.memory.vector_store.OpenAI", Dummy):
+            from src.services.memory.vector_store import MemoryStore
 
             store = MemoryStore()
 

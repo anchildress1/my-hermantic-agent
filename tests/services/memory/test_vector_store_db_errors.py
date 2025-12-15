@@ -9,9 +9,9 @@ def make_store(monkeypatch):
         def __init__(self, *a, **k):
             self.embeddings = MagicMock()
 
-    with patch("src.agent.memory.pool.SimpleConnectionPool"):
-        with patch("src.agent.memory.OpenAI", DummyOpenAI):
-            from src.agent.memory import MemoryStore
+    with patch("src.services.memory.vector_store.pool.SimpleConnectionPool"):
+        with patch("src.services.memory.vector_store.OpenAI", DummyOpenAI):
+            from src.services.memory.vector_store import MemoryStore
 
             return MemoryStore()
 

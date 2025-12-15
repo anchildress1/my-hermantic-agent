@@ -11,9 +11,9 @@ def make_store(monkeypatch):
         def __init__(self, *a, **k):
             self.embeddings = MagicMock()
 
-    with patch("src.agent.memory.pool.SimpleConnectionPool"):
-        with patch("src.agent.memory.OpenAI", DummyOpenAI):
-            from src.agent.memory import MemoryStore
+    with patch("src.services.memory.vector_store.pool.SimpleConnectionPool"):
+        with patch("src.services.memory.vector_store.OpenAI", DummyOpenAI):
+            from src.services.memory.vector_store import MemoryStore
 
             return MemoryStore()
 
@@ -24,10 +24,11 @@ def test_init_pool_raises(monkeypatch):
 
     # Make SimpleConnectionPool raise psycopg2.Error
     with patch(
-        "src.agent.memory.pool.SimpleConnectionPool", side_effect=psycopg2.Error("boom")
+        "src.services.memory.vector_store.pool.SimpleConnectionPool",
+        side_effect=psycopg2.Error("boom"),
     ):
         from importlib import reload
-        import src.agent.memory as memmod
+        import src.services.memory.vector_store as memmod
 
         with pytest.raises(psycopg2.Error):
             reload(memmod)

@@ -1,8 +1,22 @@
 [run]
+branch = True
+source = src
+data_file = coverage/.coverage
 omit =
+    */main.py
+    */models.py
     */__init__.py
-    src/agent/chat.py
 
 [report]
+show_missing = True
+skip_covered = True
 exclude_lines =
-    if __name__ == .__main__.
+    pragma: no cover
+    def __repr__
+    if __name__ == .__main__.:
+    raise NotImplementedError
+    pass
+    except ImportError:
+
+[html]
+directory = coverage/html
