@@ -1,13 +1,14 @@
 """Command-line chat interface."""
 
+import logging
 from typing import Optional
 
 from src.agent.chat_session import ChatSession
-from src.services.memory.vector_store import MemoryStore
-from src.services.llm.ollama_service import OllamaService
-
-
 from src.core.config import AgentConfig
+from src.services.llm.ollama_service import OllamaService
+from src.services.memory.vector_store import MemoryStore
+
+logger = logging.getLogger(__name__)
 
 
 def chat_loop(

@@ -16,7 +16,7 @@ This document defines the coding standards, architectural patterns, and context 
   - Driver: `psycopg2-binary`.
   - Schema: Defined in `schema/000-init.sql`.
 - **LLM Integration:**
-  - Local: `ollama`.
+  - Local: `ollama` with Hermes 4 LLM 14B.
   - Cloud: `openai`.
 - **Configuration:** `pyyaml` for YAML config, `python-dotenv` for secrets.
 - **Testing:** `pytest`, `pytest-mock`.

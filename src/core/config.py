@@ -92,6 +92,7 @@ class ModelParameters(BaseModel):
     frequency_penalty: float = 0.0
     mirostat: int = 0
     num_ctx: int = 4096
+    use_xml_tools: bool = True
 
 
 class AgentConfig(BaseModel):

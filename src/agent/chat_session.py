@@ -15,6 +15,7 @@ from src.services.memory.file_storage import (
     archive_chat_history,
 )
 from src.tools.memory_tool import create_store_memory_tool
+from src.tools.tool_utils import format_tools_xml, parse_tool_calls
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +60,19 @@ class ChatSession:
 
         self.tools = []
         if self.memory_store:
-            self.tools.append(create_store_memory_tool(self.memory_store))
+            tool_func = create_store_memory_tool(self.memory_store)
+            self.tools.append(tool_func)
             logger.info("Memory tool enabled")
+
+        # Support manual tool injection via XML (Hermes style)
+        self.use_xml_tools = self.config.parameters.use_xml_tools
+        if self.use_xml_tools and self.tools:
+            tools_xml = format_tools_xml(self.tools)
+            if self.system_prompt:
+                self.messages[0]["content"] = f"{self.system_prompt}\n\n{tools_xml}"
+            else:
+                self.messages[0]["content"] = tools_xml
+            logger.info("Manual XML tool wiring enabled")
 
     def cmd_help(self) -> None:
         """Print available commands."""
@@ -446,8 +458,12 @@ class ChatSession:
 
     def _handle_response(self) -> None:
         """Handle LLM streaming response."""
+        # If using XML tools, we don't pass 'tools' to Ollama API to avoid double-handling
+        # or confusing models that perform better with manual XML instructions.
+        ollama_tools = None if self.use_xml_tools else (self.tools or None)
+
         stream = self.ollama_service.chat(
-            self.messages, tools=self.tools or None, stream=True
+            self.messages, tools=ollama_tools, stream=True
         )
 
         full_response = ""
@@ -481,8 +497,55 @@ class ChatSession:
 
         self.messages.append(assistant_msg)
 
+        # Check for native tool calls
         if tool_calls_list:
             self._handle_tool_calls(tool_calls_list)
+
+        # Check for manual XML tool calls if enabled
+        if self.use_xml_tools:
+            xml_tool_calls = parse_tool_calls(full_response)
+            if xml_tool_calls:
+                self._handle_xml_tool_calls(xml_tool_calls)
+
+    def _handle_xml_tool_calls(self, tool_calls: List[Dict]) -> None:
+        """Process manual XML tool calls.
+
+        Args:
+            tool_calls: List of parsed tool calls {"name":..., "arguments":...}
+        """
+        tool_map = {t.__name__: t for t in self.tools}
+
+        for call in tool_calls:
+            fname = call.get("name")
+            fargs = call.get("arguments", {})
+
+            if fname in tool_map:
+                try:
+                    result = tool_map[fname](**fargs)
+                    logger.info(f"XML Tool {fname} executed: {result}")
+
+                    # Store result in a format the model expects (XML response)
+                    self.messages.append(
+                        {
+                            "role": "user",
+                            "content": f"<tool_response>{result}</tool_response>",
+                        }
+                    )
+                    print(f"🧠 Tool Output: {result}")
+                except Exception as e:
+                    logger.error(f"Error executing XML tool {fname}: {e}")
+                    self.messages.append(
+                        {
+                            "role": "user",
+                            "content": f"<tool_response>Error: {e}</tool_response>",
+                        }
+                    )
+            else:
+                logger.warning(f"XML Tool {fname} not found in available tools")
+
+        # After tool execution, continue the conversation automatically
+        print("\nAssistant (continuing): ", end="", flush=True)
+        self._handle_response()
 
     def run(self) -> None:
         """Run the interactive chat loop."""

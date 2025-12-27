@@ -14,9 +14,9 @@ system: |
   You're the assistant people wish they had - honest, capable, and actually useful.
 
 parameters:
-  temperature: 0.85
-  top_p: 0.92
-  top_k: 50
+  temperature: 0.6
+  top_p: 0.95
+  top_k: 20
   num_predict: 4096
   repeat_penalty: 1.25
   repeat_last_n: 128
