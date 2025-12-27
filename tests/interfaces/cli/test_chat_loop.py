@@ -25,7 +25,7 @@ def test_chat_loop_basic_flow(tmp_path, monkeypatch, capsys):
             text,
             type,
             context=None,
-            tag=None,
+            tags=None,
             importance=1.0,
             confidence=1.0,
             source=None,
@@ -58,14 +58,31 @@ def test_chat_loop_basic_flow(tmp_path, monkeypatch, capsys):
         def list_tags(self):
             return ["work", "personal"]
 
-        def stats(self):
+        def list_recent(self, limit=20):
+            return [
+                {
+                    "id": 1,
+                    "memory_text": "test memory",
+                    "type": "fact",
+                    "tag": "test",
+                }
+            ]
+
+        def list_by_tag(self, tag, limit=20):
+            return [
+                {
+                    "id": 1,
+                    "memory_text": "test memory",
+                    "type": "fact",
+                    "tag": tag,
+                }
+            ]
+
+        def get_stats(self):
             return {
                 "total_memories": 2,
-                "unique_types": 2,
-                "unique_tags": 2,
-                "avg_confidence": 0.9,
-                "avg_importance": 1.0,
-                "last_memory_at": "now",
+                "memory_types": {"fact": 1, "preference": 1},
+                "total_tags": 2,
             }
 
         def close(self):
@@ -74,20 +91,34 @@ def test_chat_loop_basic_flow(tmp_path, monkeypatch, capsys):
     # Patch OllamaService
     monkeypatch.setattr(OllamaService, "check_connection", lambda self: True)
 
-    # Mock chat response (non-streaming for simplicity in this test, though loop supports stream=True)
-    # The chat_loop expects stream=True by default, but we can return a list for iterator or dict for non-stream
-    # The updated chat_loop handles streaming by iterating. If we return a list of chunks, it works.
+    class MockMessage:
+        def __init__(self, content):
+            self.content = content
+            self.thinking = None
+            self.tool_calls = []
+            self.role = "assistant"
+
+    class MockChunk:
+        def __init__(self, message):
+            self.message = message
+
+    class MockResponse:
+        def __init__(self, message):
+            self.message = message
 
     def mock_chat(*args, **kwargs):
         if kwargs.get("stream"):
-            yield {"message": {"content": "ok response"}}
+            yield MockChunk(MockMessage("ok response"))
         else:
-            return {"message": {"content": "ok response"}}
+            return MockResponse(MockMessage("ok response"))
 
     monkeypatch.setattr(OllamaService, "chat", mock_chat)
 
     # Patch save_chat_history to avoid writing to disk repeatedly
-    monkeypatch.setattr(chat, "save_chat_history", lambda messages, file_path: None)
+    monkeypatch.setattr(
+        "src.services.memory.file_storage.save_chat_history",
+        lambda messages, file_path: None,
+    )
 
     # Sequence of inputs to drive through many branches
     inputs = iter(
@@ -134,17 +165,31 @@ def test_chat_loop_trimming(tmp_path, monkeypatch, capsys):
     # Mock services
     monkeypatch.setattr(OllamaService, "check_connection", lambda self: True)
 
+    class MockMessage:
+        def __init__(self, content):
+            self.content = content
+            self.thinking = None
+            self.tool_calls = []
+            self.role = "assistant"
+
+    class MockChunk:
+        def __init__(self, message):
+            self.message = message
+
     def mock_chat(*args, **kwargs):
-        yield {"message": {"content": "ok"}}
+        yield MockChunk(MockMessage("ok"))
 
     monkeypatch.setattr(OllamaService, "chat", mock_chat)
-    monkeypatch.setattr(chat, "save_chat_history", lambda messages, file_path: None)
+    monkeypatch.setattr(
+        "src.services.memory.file_storage.save_chat_history",
+        lambda messages, file_path: None,
+    )
 
     # Mock token counting to trigger trim condition
-    monkeypatch.setattr("src.interfaces.cli.chat.count_message_tokens", lambda m: 200)
+    monkeypatch.setattr("src.agent.chat_session.count_message_tokens", lambda m: 200)
 
     # Mock trim_context to simulate successful trim
-    monkeypatch.setattr("src.interfaces.cli.chat.trim_context", lambda m, t: ([], True))
+    monkeypatch.setattr("src.agent.chat_session.trim_context", lambda m, t: ([], True))
 
     # Mock inputs
     inputs = iter(["hello", "/quit"])
