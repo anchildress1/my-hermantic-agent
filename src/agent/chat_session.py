@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from src.core.config import AgentConfig
 from src.core.utils import count_message_tokens, estimate_tokens, trim_context
 from src.services.llm.ollama_service import OllamaService
 from src.services.memory.vector_store import MemoryStore
@@ -29,7 +30,7 @@ class ChatSession:
 
     def __init__(
         self,
-        config: Dict,
+        config: AgentConfig,
         context_file: str,
         llm_service: OllamaService,
         memory_store: Optional[MemoryStore] = None,
@@ -37,7 +38,7 @@ class ChatSession:
         """Initialize chat session.
 
         Args:
-            config: Chat configuration including system prompt
+            config: Chat configuration object
             context_file: Path to save/load conversation history
             llm_service: Injected LLM service instance
             memory_store: Optional vector memory store for semantic memory operations
@@ -47,11 +48,11 @@ class ChatSession:
         self.memory_store = memory_store
         self.ollama_service = llm_service
 
-        self.model = config["model"]
-        self.system_prompt = config["system"]
-        self.params = config.get("parameters", {})
+        self.model = config.model
+        self.system_prompt = config.system
+        self.params = config.parameters
 
-        self.max_context = self.params.get("num_ctx", 8192)
+        self.max_context = self.params.num_ctx
         self.max_history_tokens = int(self.max_context * 0.75)
 
         self.messages: List[Dict] = [{"role": "system", "content": self.system_prompt}]

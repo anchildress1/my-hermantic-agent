@@ -71,9 +71,9 @@ def main():
 
         # Initialize LLM service
         llm_service = OllamaService(
-            model=config["model"], parameters=config["parameters"]
+            model=config.model, parameters=config.parameters.model_dump()
         )
-        logger.info(f"LLM service initialized with model: {config['model']}")
+        logger.info(f"LLM service initialized with model: {config.model}")
 
         # Initialize semantic memory store
         memory_store = None

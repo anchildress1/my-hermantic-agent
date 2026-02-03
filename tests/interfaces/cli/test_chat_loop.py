@@ -2,15 +2,17 @@ import builtins
 
 from src.interfaces.cli import chat
 from src.services.llm.ollama_service import OllamaService
+from src.core.config import AgentConfig
 
 
 def test_chat_loop_basic_flow(tmp_path, monkeypatch, capsys):
     # Prepare template and memory file
-    template = {
-        "model": "llama3.2",
-        "system": "You are a test",
-        "parameters": {"num_ctx": 1024},
-    }
+    # Prepare config and memory file
+    config = AgentConfig(
+        model="llama3.2",
+        system="You are a test",
+        parameters={"num_ctx": 1024},
+    )
     mem_file = tmp_path / "memory.json"
     mem_file.write_text(
         '{"timestamp": "t", "messages": [{"role": "system", "content": "You are a test"}]}'
@@ -146,12 +148,12 @@ def test_chat_loop_basic_flow(tmp_path, monkeypatch, capsys):
 
     # Create service instance (methods are patched)
     llm_service = OllamaService(
-        model=template["model"], parameters=template["parameters"]
+        model=config.model, parameters=config.parameters.model_dump()
     )
 
     # Run chat loop; it should exit cleanly
     chat.chat_loop(
-        template,
+        config,
         context_file=str(mem_file),
         llm_service=llm_service,
         memory_store=DummyStore(),
@@ -165,11 +167,12 @@ def test_chat_loop_basic_flow(tmp_path, monkeypatch, capsys):
 
 def test_chat_loop_trimming(tmp_path, monkeypatch, capsys):
     # Prepare template and memory file
-    template = {
-        "model": "llama3.2",
-        "system": "You are a test",
-        "parameters": {"num_ctx": 100},
-    }
+    # Prepare config and memory file
+    config = AgentConfig(
+        model="llama3.2",
+        system="You are a test",
+        parameters={"num_ctx": 100},
+    )
     mem_file = tmp_path / "memory.json"
 
     # Mock services
@@ -207,10 +210,10 @@ def test_chat_loop_trimming(tmp_path, monkeypatch, capsys):
 
     # Create service instance
     llm_service = OllamaService(
-        model=template["model"], parameters=template["parameters"]
+        model=config.model, parameters=config.parameters.model_dump()
     )
 
-    chat.chat_loop(template, context_file=str(mem_file), llm_service=llm_service)
+    chat.chat_loop(config, context_file=str(mem_file), llm_service=llm_service)
 
     out = capsys.readouterr().out
     assert "Auto-trimmed context" in out

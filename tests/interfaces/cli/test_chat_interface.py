@@ -1,5 +1,6 @@
 from src.agent.chat_session import ChatSession
 from src.services.llm.ollama_service import OllamaService
+from src.core.config import AgentConfig
 from unittest.mock import MagicMock, patch
 
 
@@ -10,7 +11,7 @@ def test_cmd_help_with_memory_store(capsys):
         pass
 
     session = ChatSession(
-        config={"model": "test", "system": "", "parameters": {}},
+        config=AgentConfig(model="test", system="", parameters={}),
         context_file="test.json",
         llm_service=MagicMock(spec=OllamaService),
         memory_store=DummyMemoryStore(),
@@ -24,7 +25,7 @@ def test_cmd_help_with_memory_store(capsys):
 def test_cmd_help_without_memory_store(capsys):
     """Test help command excludes memory commands when store is unavailable."""
     session = ChatSession(
-        config={"model": "test", "system": "", "parameters": {}},
+        config=AgentConfig(model="test", system="", parameters={}),
         context_file="test.json",
         llm_service=MagicMock(spec=OllamaService),
         memory_store=None,
@@ -38,7 +39,7 @@ def test_cmd_help_without_memory_store(capsys):
 def test_cmd_load_with_files(capsys):
     """Test loading specific files."""
     session = ChatSession(
-        config={"model": "test", "system": "sys", "parameters": {}},
+        config=AgentConfig(model="test", system="sys", parameters={}),
         context_file="default.json",
         llm_service=MagicMock(spec=OllamaService),
     )
@@ -62,7 +63,7 @@ def test_cmd_load_with_files(capsys):
 def test_cmd_load_no_files_found(capsys):
     """Test loading files where none exist."""
     session = ChatSession(
-        config={"model": "test", "system": "sys", "parameters": {}},
+        config=AgentConfig(model="test", system="sys", parameters={}),
         context_file="default.json",
         llm_service=MagicMock(spec=OllamaService),
     )
@@ -79,7 +80,7 @@ def test_cmd_load_no_files_found(capsys):
 def test_cmd_load_default_success(capsys):
     """Test loading default context successfully."""
     session = ChatSession(
-        config={"model": "test", "system": "sys", "parameters": {}},
+        config=AgentConfig(model="test", system="sys", parameters={}),
         context_file="default.json",
         llm_service=MagicMock(spec=OllamaService),
     )
@@ -98,7 +99,7 @@ def test_cmd_load_default_success(capsys):
 def test_cmd_load_default_failure(capsys):
     """Test loading default context failure."""
     session = ChatSession(
-        config={"model": "test", "system": "sys", "parameters": {}},
+        config=AgentConfig(model="test", system="sys", parameters={}),
         context_file="default.json",
         llm_service=MagicMock(spec=OllamaService),
     )
@@ -117,7 +118,7 @@ def test_cmd_load_default_failure(capsys):
 def test_cmd_clear(capsys):
     """Test clear command with archive."""
     session = ChatSession(
-        config={"model": "test", "system": "sys", "parameters": {}},
+        config=AgentConfig(model="test", system="sys", parameters={}),
         context_file="default.json",
         llm_service=MagicMock(spec=OllamaService),
     )
