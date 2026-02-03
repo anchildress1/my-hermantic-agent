@@ -134,3 +134,45 @@ def test_cmd_clear(capsys):
             assert session.messages[0]["content"] == "sys"
             out = capsys.readouterr().out
             assert "Previous conversation archived to archive.json" in out
+
+
+def test_cmd_stats(capsys):
+    """Test stats command formatting."""
+    mock_store = MagicMock()
+    mock_store.stats.return_value = {
+        "total_memories": 10,
+        "total_tags": 2,
+        "memory_types": {"fact": 6, "preference": 4},
+    }
+
+    session = ChatSession(
+        config=AgentConfig(model="test", system="sys", parameters={}),
+        context_file="default.json",
+        llm_service=MagicMock(spec=OllamaService),
+        memory_store=mock_store,
+    )
+
+    session.cmd_stats()
+    out = capsys.readouterr().out
+    assert "Memory Statistics" in out
+    assert "Total memories: 10" in out
+    assert "Total tags:     2" in out
+    assert "- fact: 6" in out
+    assert "- preference: 4" in out
+
+
+def test_cmd_stats_none(capsys):
+    """Test stats command when store returns None."""
+    mock_store = MagicMock()
+    mock_store.stats.return_value = None
+
+    session = ChatSession(
+        config=AgentConfig(model="test", system="sys", parameters={}),
+        context_file="default.json",
+        llm_service=MagicMock(spec=OllamaService),
+        memory_store=mock_store,
+    )
+
+    session.cmd_stats()
+    out = capsys.readouterr().out
+    assert "No statistics available" in out

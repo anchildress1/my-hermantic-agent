@@ -526,17 +526,32 @@ class MemoryStore:
         try:
             conn = self._get_connection()
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Get aggregates
                 cur.execute("""
                     SELECT
                         COUNT(*) as total_memories,
-                        COUNT(DISTINCT type) as unique_types,
-                        COUNT(DISTINCT tag) as unique_tags,
+                        COUNT(DISTINCT type) as total_types,
+                        COUNT(DISTINCT tag) as total_tags,
                         AVG(confidence) as avg_confidence,
                         AVG(importance) as avg_importance,
                         MAX(created_at) as last_memory_at
                     FROM hermes.memories
                 """)
                 stats = dict(cur.fetchone())
+
+                # Get type distribution for 'memory_types' field
+                cur.execute("""
+                    SELECT type, COUNT(*) as count 
+                    FROM hermes.memories 
+                    GROUP BY type
+                """)
+                type_counts = {row["type"]: row["count"] for row in cur.fetchall()}
+                stats["memory_types"] = type_counts
+
+                # Alias for backward compatibility/CLI expectations
+                stats["unique_types"] = stats["total_types"]
+                stats["unique_tags"] = stats["total_tags"]
+
                 logger.debug(f"Memory stats: {stats}")
                 return stats
         except psycopg2.Error as e:

@@ -365,10 +365,24 @@ class ChatSession:
 
         try:
             stats = self.memory_store.stats()
+            if not stats:
+                print(
+                    "⚠️  No statistics available (database may be empty or unreachable)"
+                )
+                return
+
             print("\n📊 Memory Statistics:\n")
             print(f"  Total memories: {stats.get('total_memories', 0)}")
-            print(f"  Memory types: {stats.get('memory_types', {})}")
-            print(f"  Total tags: {stats.get('total_tags', 0)}")
+            print(f"  Total tags:     {stats.get('total_tags', 0)}")
+
+            types = stats.get("memory_types", {})
+            if types:
+                print("  Memory types:")
+                for mtype, count in types.items():
+                    print(f"    - {mtype}: {count}")
+            else:
+                print(f"  Memory types: {stats.get('total_types', 0)} (unique)")
+
         except Exception as e:
             logger.error(f"Error getting stats: {e}", exc_info=True)
             print(f"❌ Error: {e}")
