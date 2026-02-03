@@ -11,6 +11,7 @@ Memory commands interact exclusively with the cloud database.
 ## Architecture
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart TB
     User[User Chat Input] -->|command| Agent[Chat Agent]
     Agent -->|parse command| Parser{Command Type}
@@ -37,10 +38,10 @@ flowchart TB
     Store -->|formatted| Agent
     Agent -->|response| User
 
-    style User fill:#e1f5ff
-    style Agent fill:#fff4e1
-    style OpenAI fill:#ffe1f5
-    style DB fill:#e1ffe1
+    style User stroke:#333,stroke-width:2px
+    style Agent stroke:#333,stroke-width:2px
+    style OpenAI stroke:#333,stroke-width:1px
+    style DB stroke:#333,stroke-width:2px
 ```
 
 ## Quick Reference

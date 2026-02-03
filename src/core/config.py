@@ -1,10 +1,30 @@
 import yaml
-from pathlib import Path
-
 import logging
+from pathlib import Path
+from typing import Optional
 from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
+
+
+class Settings(BaseSettings):
+    """Global application settings and environment variables."""
+
+    openai_api_key: str = Field(..., description="OpenAI API key for embeddings")
+    memory_db_url: Optional[str] = Field(
+        None, description="TimescaleDB connection string"
+    )
+    openai_embedding_model: str = "text-embedding-3-small"
+    openai_embedding_dim: int = 1536
+    template_config: Path = Path("config/template.yaml")
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+
+def get_settings() -> Settings:
+    """Load settings from environment variables."""
+    return Settings()
 
 
 class ModelParameters(BaseModel):

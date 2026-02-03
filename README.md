@@ -45,7 +45,7 @@ ______________________________________________________________________
 ## Architecture
 
 ```mermaid
-%%{init: {'theme':'base', 'lightTheme':'default', 'darkTheme':'dark', 'securityLevel':'strict', 'accessibility': {'label': 'Architecture diagram', 'description': 'System architecture and data flow; supports light/dark modes.'}}}%%
+%%{init: {'theme': 'neutral', 'securityLevel': 'loose', 'accessibility': {'label': 'Architecture diagram', 'description': 'System architecture and data flow; supports light/dark modes.'}}}%%
 graph TB
     CLI[CLI Interface] --> Chat[Chat Manager]
     Chat --> Ollama[Ollama LLM]

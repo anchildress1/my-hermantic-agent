@@ -1,10 +1,7 @@
-import os
 import logging
-from pathlib import Path
 from dotenv import load_dotenv
-
 from src.core.logging import setup_logging
-from src.core.config import load_config
+from src.core.config import load_config, get_settings
 from src.services.memory.vector_store import MemoryStore
 from src.services.llm.ollama_service import OllamaService
 from src.interfaces.cli.chat import chat_loop
@@ -15,51 +12,19 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
-def validate_environment() -> bool:
-    """Validate required environment variables."""
-    required = {
-        "OPENAI_API_KEY": "OpenAI API key for embeddings",
-    }
-
-    optional = {
-        "MEMORY_DB_URL": "TimescaleDB connection string for semantic memory",
-        "OPENAI_EMBEDDING_MODEL": "OpenAI embedding model",
-        "OPENAI_EMBEDDING_DIM": "OpenAI embedding dimensions",
-    }
-
-    missing = []
-    for var, description in required.items():
-        if not os.getenv(var):
-            missing.append(f"  ❌ {var}: {description}")
-
-    missing_optional = []
-    for var, description in optional.items():
-        if not os.getenv(var):
-            missing_optional.append(f"  ⚠️  {var}: {description}")
-
-    if missing:
-        print("❌ Missing required environment variables:")
-        print("\n".join(missing))
-        print("\nCopy .env.example to .env and fill in values")
-        return False
-
-    if missing_optional:
-        print("⚠️  Optional environment variables not set:")
-        print("\n".join(missing_optional))
-        print("\nSemantic memory features will be unavailable without MEMORY_DB_URL")
-        print()
-
-    return True
-
-
 def main():
     setup_logging()
     logger.info("Starting Ollama Agent")
 
-    if not validate_environment():
-        return
+    try:
+        settings = get_settings()
+    except Exception as e:
+        print("❌ Configuration error:")
+        print(f"  {e}")
+        print("\nMake sure your .env file is correctly configured with OPENAI_API_KEY.")
+        return 1
 
-    template_path = Path(os.getenv("TEMPLATE_CONFIG", "config/template.yaml"))
+    template_path = settings.template_config
 
     if not template_path.exists():
         logger.error(f"Template file not found: {template_path}")
@@ -77,9 +42,9 @@ def main():
 
         # Initialize semantic memory store
         memory_store = None
-        if os.getenv("MEMORY_DB_URL"):
+        if settings.memory_db_url:
             try:
-                memory_store = MemoryStore()
+                memory_store = MemoryStore(settings=settings)
                 logger.info("Semantic memory store initialized")
                 print("✓ Semantic memory connected")
             except Exception as e:

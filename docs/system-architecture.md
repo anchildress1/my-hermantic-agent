@@ -5,12 +5,7 @@ Hermes Agent architecture and data flow diagrams.
 ## System Architecture
 
 ```mermaid
----
-config:
-  accessibility:
-    - label: System Architecture
-    - description: System architecture and data flow
----
+%%{init: {'theme': 'neutral'}}%%
 graph TB
     subgraph "User Interface"
         CLI[CLI Chat Interface]
@@ -53,12 +48,7 @@ graph TB
 ## Data Flow
 
 ```mermaid
----
-config:
-  accessibility:
-    - label: Data Flow
-    - description: Sequence diagram showing message flow
----
+%%{init: {'theme': 'neutral'}}%%
 sequenceDiagram
     participant User
     participant Chat as CLI Interface
@@ -89,12 +79,7 @@ sequenceDiagram
 ## Component Responsibilities
 
 ```mermaid
----
-config:
-  accessibility:
-    - label: Component Responsibilities
-    - description: Diagram describing component responsibilities across modules
----
+%%{init: {'theme': 'neutral'}}%%
 graph TD
     subgraph "Core (src/core)"
         Core1[Config]
@@ -124,12 +109,7 @@ graph TD
 ## Technology Stack
 
 ```mermaid
----
-config:
-  accessibility:
-    - label: Technology Stack
-    - description: Tech stack components and their relationships
----
+%%{init: {'theme': 'neutral'}}%%
 graph LR
     subgraph "Frontend"
         CLI[CLI Interface<br/>Python]

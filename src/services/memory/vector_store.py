@@ -2,12 +2,15 @@ import os
 import logging
 import time
 from functools import lru_cache, wraps
+from typing import List, Dict, Optional, Tuple
+
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 from openai import OpenAI, OpenAIError, RateLimitError, APITimeoutError
-from typing import List, Dict, Optional, Tuple
 from dotenv import load_dotenv
+
+from src.core.config import Settings, get_settings
 
 # Load environment variables
 load_dotenv()
@@ -54,15 +57,29 @@ class MemoryStore:
         "text-embedding-ada-002": 1536,
     }
 
-    def __init__(self):
-        self.conn_string = os.getenv("MEMORY_DB_URL")
+    def __init__(self, settings: Optional[Settings] = None):
+        """Initialize semantic memory store.
+
+        Args:
+            settings: Optional settings object. If not provided, loads from environment.
+        """
+        if settings is None:
+            try:
+                settings = get_settings()
+            except Exception as e:
+                # If settings fail to load but we aren't using them yet, we handle it below
+                logger.warning(f"Could not load settings in MemoryStore: {e}")
+
+        self.conn_string = (
+            settings.memory_db_url if settings else os.getenv("MEMORY_DB_URL")
+        )
         if not self.conn_string:
             raise ValueError(
                 "MEMORY_DB_URL environment variable is required. "
                 "Add it to your .env file with your TimescaleDB connection string."
             )
 
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = settings.openai_api_key if settings else os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError(
                 "OPENAI_API_KEY environment variable is required. "
@@ -70,13 +87,19 @@ class MemoryStore:
             )
 
         self.openai_client = OpenAI(api_key=api_key)
-        self.embedding_model = os.getenv(
-            "OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"
+        self.embedding_model = (
+            settings.openai_embedding_model
+            if settings
+            else os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
         )
 
         # Get embedding dimensions (auto-detect from model or use override)
         default_dim = self.EMBEDDING_DIMS.get(self.embedding_model, 1536)
-        self.embedding_dim = int(os.getenv("OPENAI_EMBEDDING_DIM", str(default_dim)))
+        self.embedding_dim = (
+            settings.openai_embedding_dim
+            if settings
+            else int(os.getenv("OPENAI_EMBEDDING_DIM", str(default_dim)))
+        )
 
         logger.info(
             f"Using embedding model: {self.embedding_model} ({self.embedding_dim} dimensions)"
