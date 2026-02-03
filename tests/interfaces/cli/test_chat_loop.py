@@ -144,8 +144,18 @@ def test_chat_loop_basic_flow(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr(builtins, "input", lambda prompt="": next(inputs))
 
+    # Create service instance (methods are patched)
+    llm_service = OllamaService(
+        model=template["model"], parameters=template["parameters"]
+    )
+
     # Run chat loop; it should exit cleanly
-    chat.chat_loop(template, context_file=str(mem_file), memory_store=DummyStore())
+    chat.chat_loop(
+        template,
+        context_file=str(mem_file),
+        llm_service=llm_service,
+        memory_store=DummyStore(),
+    )
 
     # Capture output to check some expected substrings
     out = capsys.readouterr().out
@@ -195,7 +205,12 @@ def test_chat_loop_trimming(tmp_path, monkeypatch, capsys):
     inputs = iter(["hello", "/quit"])
     monkeypatch.setattr(builtins, "input", lambda prompt="": next(inputs))
 
-    chat.chat_loop(template, context_file=str(mem_file))
+    # Create service instance
+    llm_service = OllamaService(
+        model=template["model"], parameters=template["parameters"]
+    )
+
+    chat.chat_loop(template, context_file=str(mem_file), llm_service=llm_service)
 
     out = capsys.readouterr().out
     assert "Auto-trimmed context" in out

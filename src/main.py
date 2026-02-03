@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from src.core.logging import setup_logging
 from src.core.config import load_config
 from src.services.memory.vector_store import MemoryStore
+from src.services.llm.ollama_service import OllamaService
 from src.interfaces.cli.chat import chat_loop
 
 # Load environment variables
@@ -68,6 +69,12 @@ def main():
     try:
         config = load_config(template_path)
 
+        # Initialize LLM service
+        llm_service = OllamaService(
+            model=config["model"], parameters=config["parameters"]
+        )
+        logger.info(f"LLM service initialized with model: {config['model']}")
+
         # Initialize semantic memory store
         memory_store = None
         if os.getenv("MEMORY_DB_URL"):
@@ -80,7 +87,12 @@ def main():
                 print(f"⚠️  Semantic memory unavailable: {e}")
                 print("   Continuing without semantic memory...")
 
-        chat_loop(config, context_file="data/memory.json", memory_store=memory_store)
+        chat_loop(
+            config,
+            context_file="data/memory.json",
+            llm_service=llm_service,
+            memory_store=memory_store,
+        )
 
     except KeyboardInterrupt:
         print("\n\nExiting...")

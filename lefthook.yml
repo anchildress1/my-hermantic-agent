@@ -1,0 +1,12 @@
+pre-commit:
+  commands:
+    format:
+      run: uv run ruff format .
+    lint:
+      run: uv run ruff check .
+    mdformat:
+      run: uv run mdformat --check *.md docs/ src/ tests/
+commit-msg:
+  commands:
+    gitlint:
+      run: uv run gitlint --msg-filename "{1}"

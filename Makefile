@@ -1,4 +1,4 @@
-.PHONY: help install setup setup-db run test coverage logs clean format lint ai-checks
+.PHONY: help install setup setup-db setup-hooks run test coverage logs clean format lint ai-checks
 
 help:
 	@echo "Ollama Agent - Available Commands:"
@@ -6,6 +6,7 @@ help:
 	@echo "  make install         - Install dependencies with uv"
 	@echo "  make setup           - Setup environment (.env file)"
 	@echo "  make setup-db        - Initialize TimescaleDB schema"
+	@echo "  make setup-hooks     - Install git hooks with lefthook"
 	@echo "  make run             - Start the chat interface"
 	@echo "  make format          - Format code with ruff"
 	@echo "  make lint            - Lint code with ruff"
@@ -28,6 +29,11 @@ setup:
 setup-db:
 	@echo "Initializing TimescaleDB schema..."
 	uv run python scripts/setup_db.py
+
+setup-hooks:
+	@echo "Installing git hooks..."
+	uv run lefthook install
+	@echo "✓ Git hooks installed"
 
 run:
 	uv run python main.py

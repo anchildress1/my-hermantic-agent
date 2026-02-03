@@ -31,24 +31,25 @@ class ChatSession:
         self,
         config: Dict,
         context_file: str,
+        llm_service: OllamaService,
         memory_store: Optional[MemoryStore] = None,
     ):
         """Initialize chat session.
 
         Args:
-            config: Chat configuration including model, system prompt, and parameters
+            config: Chat configuration including system prompt
             context_file: Path to save/load conversation history
+            llm_service: Injected LLM service instance
             memory_store: Optional vector memory store for semantic memory operations
         """
         self.config = config
         self.context_file = context_file
         self.memory_store = memory_store
+        self.ollama_service = llm_service
 
         self.model = config["model"]
         self.system_prompt = config["system"]
-        self.params = config["parameters"]
-
-        self.ollama_service = OllamaService(model=self.model, parameters=self.params)
+        self.params = config.get("parameters", {})
 
         self.max_context = self.params.get("num_ctx", 8192)
         self.max_history_tokens = int(self.max_context * 0.75)
