@@ -427,6 +427,75 @@ class MemoryStore:
             if conn:
                 self._return_connection(conn)
 
+    def list_memories(
+        self,
+        tag: Optional[str] = None,
+        type: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> List[Dict]:
+        """List memories with optional filtering and pagination.
+
+        Args:
+            tag: Optional tag filter
+            type: Optional type filter (preference, fact, task, insight)
+            limit: Maximum number of results (default 20, max 100)
+            offset: Number of results to skip (for pagination)
+
+        Returns:
+            List of memory dictionaries with all fields
+        """
+        if limit < 1 or limit > 100:
+            raise ValueError("limit must be between 1 and 100")
+
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+
+        if type and type not in self.VALID_TYPES:
+            raise ValueError(f"type must be one of {self.VALID_TYPES}")
+
+        conn = None
+        try:
+            conn = self._get_connection()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                sql = """
+                    SELECT
+                        id, memory_text, type, tag, importance, confidence,
+                        source, created_at, last_accessed, access_count,
+                        embedding_model
+                    FROM hermes.memories
+                    WHERE 1=1
+                """
+                params = []
+
+                if tag:
+                    sql += " AND tag = %s"
+                    params.append(tag)
+
+                if type:
+                    sql += " AND type = %s"
+                    params.append(type)
+
+                sql += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
+                params.extend([limit, offset])
+
+                cur.execute(sql, params)
+                results = [dict(row) for row in cur.fetchall()]
+                logger.debug(
+                    f"Listed {len(results)} memories (tag={tag}, type={type}, limit={limit})"
+                )
+                return results
+
+        except psycopg2.Error as e:
+            logger.error(f"Database error listing memories: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error listing memories: {e}")
+            return []
+        finally:
+            if conn:
+                self._return_connection(conn)
+
     def list_contexts(self) -> List[str]:
         """Get all unique contexts."""
         return self.list_tags()

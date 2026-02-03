@@ -299,16 +299,12 @@ class ChatSession:
             return
 
         try:
-            # Use existing MemoryStore API (list_contexts)
-            contexts = self.memory_store.list_contexts()
+            # Use proper MemoryStore API with DB-level filtering
+            results = self.memory_store.list_memories(tag=tag, limit=20)
 
             if tag:
-                # Filter by tag and take most recent 20
-                results = [c for c in contexts if c.get("tag") == tag][-20:]
                 print(f"\n📚 Memories tagged '{tag}':\n")
             else:
-                # Take most recent 20 contexts
-                results = contexts[-20:]
                 print("\n📚 Recent memories:\n")
 
             if results:
