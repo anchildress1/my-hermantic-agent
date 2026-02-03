@@ -1,7 +1,8 @@
 import logging
 from dotenv import load_dotenv
+
 from src.core.logging import setup_logging
-from src.core.config import load_config, get_settings
+from src.core.config import load_config, get_settings, get_config_path
 from src.services.memory.vector_store import MemoryStore
 from src.services.llm.ollama_service import OllamaService
 from src.interfaces.cli.chat import chat_loop
@@ -24,7 +25,11 @@ def main():
         print("\nMake sure your .env file is correctly configured with OPENAI_API_KEY.")
         return 1
 
-    template_path = settings.template_config
+    # Resolve config path based on environment
+    template_path = get_config_path(settings)
+    logger.info(
+        f"Using configuration: {template_path} (environment: {settings.environment})"
+    )
 
     if not template_path.exists():
         logger.error(f"Template file not found: {template_path}")

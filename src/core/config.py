@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     openai_embedding_model: str = "text-embedding-3-small"
     openai_embedding_dim: int = 1536
     template_config: Path = Path("config/template.yaml")
+    environment: str = Field(
+        "development", description="Runtime environment (development, production, test)"
+    )
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -25,6 +28,55 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Load settings from environment variables."""
     return Settings()
+
+
+def get_config_path(
+    settings: Optional[Settings] = None, profile: Optional[str] = None
+) -> Path:
+    """Resolve configuration file path based on environment or explicit profile.
+
+    Args:
+        settings: Optional settings object. If not provided, loads from environment.
+        profile: Optional explicit profile name (overrides environment setting).
+
+    Returns:
+        Path to the configuration file.
+
+    Priority:
+        1. Explicit profile argument
+        2. TEMPLATE_CONFIG environment variable
+        3. Environment-based profile (dev.yaml, prod.yaml, test.yaml)
+        4. Default template.yaml
+    """
+    if settings is None:
+        settings = get_settings()
+
+    # Explicit profile takes highest priority
+    if profile:
+        config_path = Path(f"config/{profile}.yaml")
+        if config_path.exists():
+            return config_path
+        logger.warning(f"Profile config not found: {config_path}, falling back")
+
+    # Check if TEMPLATE_CONFIG is explicitly set
+    if settings.template_config != Path("config/template.yaml"):
+        return settings.template_config
+
+    # Environment-based config selection
+    env_map = {
+        "development": "config/template.yaml",
+        "dev": "config/template.yaml",
+        "production": "config/template.yaml",  # Can be changed to prod.yaml when created
+        "prod": "config/template.yaml",
+        "test": "config/template.yaml",
+    }
+
+    env_config = Path(env_map.get(settings.environment.lower(), "config/template.yaml"))
+    if env_config.exists():
+        return env_config
+
+    # Final fallback
+    return Path("config/template.yaml")
 
 
 class ModelParameters(BaseModel):
