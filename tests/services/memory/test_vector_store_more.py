@@ -25,9 +25,11 @@ def test_memory_init_missing_env(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     import src.services.memory.vector_store as memmod
 
-    with patch("src.services.memory.vector_store.pool.SimpleConnectionPool"):
-        with pytest.raises(ValueError):
-            memmod.MemoryStore()
+    with patch("src.services.memory.vector_store.get_settings") as mock_settings:
+        mock_settings.side_effect = Exception("No settings")
+        with patch("src.services.memory.vector_store.pool.SimpleConnectionPool"):
+            with pytest.raises(ValueError):
+                memmod.MemoryStore()
 
 
 def test_remember_input_validations(monkeypatch):

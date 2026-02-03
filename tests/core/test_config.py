@@ -13,8 +13,8 @@ def test_load_template_success(tmp_path):
     p.write_text(yaml.safe_dump(data))
 
     loaded = load_config(p)
-    assert loaded["model"] == "llama3.2"
-    assert loaded["system"] == "You are helpful"
+    assert loaded.model == "llama3.2"
+    assert loaded.system == "You are helpful"
 
 
 def test_load_template_missing(tmp_path):

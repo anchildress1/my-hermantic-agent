@@ -1,4 +1,5 @@
-model: hf.co/DevQuasar/NousResearch.Hermes-4-14B-GGUF:Q8_0
+# model: hf.co/DevQuasar/NousResearch.Hermes-4-14B-GGUF:Q8_0
+model: hf.co/DevQuasar/NousResearch.Hermes-4-14B-GGUF:Q2_K
 system: |
   You are Hermes, a personal assistant who actually gives a shit. You're witty, sharp, direct, and don't
   waste time with corporate pleasantries. You'll push back when something's a bad idea,

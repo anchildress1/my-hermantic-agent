@@ -2,12 +2,15 @@ import os
 import logging
 import time
 from functools import lru_cache, wraps
+from typing import List, Dict, Optional, Tuple
+
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 from openai import OpenAI, OpenAIError, RateLimitError, APITimeoutError
-from typing import List, Dict, Optional, Tuple
 from dotenv import load_dotenv
+
+from src.core.config import Settings, get_settings
 
 # Load environment variables
 load_dotenv()
@@ -54,15 +57,29 @@ class MemoryStore:
         "text-embedding-ada-002": 1536,
     }
 
-    def __init__(self):
-        self.conn_string = os.getenv("MEMORY_DB_URL")
+    def __init__(self, settings: Optional[Settings] = None):
+        """Initialize semantic memory store.
+
+        Args:
+            settings: Optional settings object. If not provided, loads from environment.
+        """
+        if settings is None:
+            try:
+                settings = get_settings()
+            except Exception as e:
+                # If settings fail to load but we aren't using them yet, we handle it below
+                logger.warning(f"Could not load settings in MemoryStore: {e}")
+
+        self.conn_string = (
+            settings.memory_db_url if settings else os.getenv("MEMORY_DB_URL")
+        )
         if not self.conn_string:
             raise ValueError(
                 "MEMORY_DB_URL environment variable is required. "
                 "Add it to your .env file with your TimescaleDB connection string."
             )
 
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = settings.openai_api_key if settings else os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError(
                 "OPENAI_API_KEY environment variable is required. "
@@ -70,13 +87,19 @@ class MemoryStore:
             )
 
         self.openai_client = OpenAI(api_key=api_key)
-        self.embedding_model = os.getenv(
-            "OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"
+        self.embedding_model = (
+            settings.openai_embedding_model
+            if settings
+            else os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
         )
 
         # Get embedding dimensions (auto-detect from model or use override)
         default_dim = self.EMBEDDING_DIMS.get(self.embedding_model, 1536)
-        self.embedding_dim = int(os.getenv("OPENAI_EMBEDDING_DIM", str(default_dim)))
+        self.embedding_dim = (
+            settings.openai_embedding_dim
+            if settings
+            else int(os.getenv("OPENAI_EMBEDDING_DIM", str(default_dim)))
+        )
 
         logger.info(
             f"Using embedding model: {self.embedding_model} ({self.embedding_dim} dimensions)"
@@ -404,6 +427,75 @@ class MemoryStore:
             if conn:
                 self._return_connection(conn)
 
+    def list_memories(
+        self,
+        tag: Optional[str] = None,
+        type: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> List[Dict]:
+        """List memories with optional filtering and pagination.
+
+        Args:
+            tag: Optional tag filter
+            type: Optional type filter (preference, fact, task, insight)
+            limit: Maximum number of results (default 20, max 100)
+            offset: Number of results to skip (for pagination)
+
+        Returns:
+            List of memory dictionaries with all fields
+        """
+        if limit < 1 or limit > 100:
+            raise ValueError("limit must be between 1 and 100")
+
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+
+        if type and type not in self.VALID_TYPES:
+            raise ValueError(f"type must be one of {self.VALID_TYPES}")
+
+        conn = None
+        try:
+            conn = self._get_connection()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                sql = """
+                    SELECT
+                        id, memory_text, type, tag, importance, confidence,
+                        source, created_at, last_accessed, access_count,
+                        embedding_model
+                    FROM hermes.memories
+                    WHERE 1=1
+                """
+                params = []
+
+                if tag:
+                    sql += " AND tag = %s"
+                    params.append(tag)
+
+                if type:
+                    sql += " AND type = %s"
+                    params.append(type)
+
+                sql += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
+                params.extend([limit, offset])
+
+                cur.execute(sql, params)
+                results = [dict(row) for row in cur.fetchall()]
+                logger.debug(
+                    f"Listed {len(results)} memories (tag={tag}, type={type}, limit={limit})"
+                )
+                return results
+
+        except psycopg2.Error as e:
+            logger.error(f"Database error listing memories: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error listing memories: {e}")
+            return []
+        finally:
+            if conn:
+                self._return_connection(conn)
+
     def list_contexts(self) -> List[str]:
         """Get all unique contexts."""
         return self.list_tags()
@@ -434,17 +526,32 @@ class MemoryStore:
         try:
             conn = self._get_connection()
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Get aggregates
                 cur.execute("""
                     SELECT
                         COUNT(*) as total_memories,
-                        COUNT(DISTINCT type) as unique_types,
-                        COUNT(DISTINCT tag) as unique_tags,
+                        COUNT(DISTINCT type) as total_types,
+                        COUNT(DISTINCT tag) as total_tags,
                         AVG(confidence) as avg_confidence,
                         AVG(importance) as avg_importance,
                         MAX(created_at) as last_memory_at
                     FROM hermes.memories
                 """)
                 stats = dict(cur.fetchone())
+
+                # Get type distribution for 'memory_types' field
+                cur.execute("""
+                    SELECT type, COUNT(*) as count 
+                    FROM hermes.memories 
+                    GROUP BY type
+                """)
+                type_counts = {row["type"]: row["count"] for row in cur.fetchall()}
+                stats["memory_types"] = type_counts
+
+                # Alias for backward compatibility/CLI expectations
+                stats["unique_types"] = stats["total_types"]
+                stats["unique_tags"] = stats["total_tags"]
+
                 logger.debug(f"Memory stats: {stats}")
                 return stats
         except psycopg2.Error as e:

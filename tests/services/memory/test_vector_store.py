@@ -128,17 +128,25 @@ def test_list_contexts(store, mock_db_connection):
 def test_stats(store, mock_db_connection):
     """Test memory statistics."""
     conn, cursor = mock_db_connection
+    # First query for aggregates
     cursor.fetchone.return_value = {
         "total_memories": 42,
-        "unique_types": 4,
-        "unique_contexts": 3,
+        "total_types": 4,
+        "total_tags": 3,
         "avg_confidence": 0.95,
+        "avg_importance": 1.5,
         "last_memory_at": "2024-01-01",
     }
+    # Second query for type distribution
+    cursor.fetchall.return_value = [
+        {"type": "fact", "count": 20},
+        {"type": "preference", "count": 22},
+    ]
 
     with patch.object(store, "_get_connection", return_value=conn):
         stats = store.stats()
 
     assert stats["total_memories"] == 42
     assert stats["unique_types"] == 4
+    assert stats["memory_types"] == {"fact": 20, "preference": 22}
     assert "avg_confidence" in stats
