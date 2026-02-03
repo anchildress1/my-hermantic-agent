@@ -215,8 +215,8 @@ class ChatSession:
             return
 
         memory_type = "fact"
-        tags = []
-        importance = 5
+        tag = None
+        importance = 1.0  # Default within valid range [0-3]
         confidence = 0.8
 
         type_match = re.search(r"type=(\w+)", args)
@@ -226,13 +226,15 @@ class ChatSession:
 
         tag_match = re.search(r"tag=(\w+)", args)
         if tag_match:
-            tags.append(tag_match.group(1))
+            tag = tag_match.group(1)
             args = re.sub(r"tag=\w+\s*", "", args)
 
-        importance_match = re.search(r"importance=(\d+)", args)
+        importance_match = re.search(r"importance=([\d.]+)", args)
         if importance_match:
-            importance = int(importance_match.group(1))
-            args = re.sub(r"importance=\d+\s*", "", args)
+            importance = float(importance_match.group(1))
+            # Clamp to valid range [0-3]
+            importance = max(0.0, min(3.0, importance))
+            args = re.sub(r"importance=[\d.]+\s*", "", args)
 
         confidence_match = re.search(r"confidence=([\d.]+)", args)
         if confidence_match:
@@ -248,8 +250,7 @@ class ChatSession:
             mem_id = self.memory_store.remember(
                 text,
                 memory_type,
-                context="chat",
-                tags=tags,
+                context=tag or "chat",
                 importance=importance,
                 confidence=confidence,
             )
@@ -298,11 +299,16 @@ class ChatSession:
             return
 
         try:
+            # Use existing MemoryStore API (list_contexts)
+            contexts = self.memory_store.list_contexts()
+
             if tag:
-                results = self.memory_store.list_by_tag(tag, limit=20)
+                # Filter by tag and take most recent 20
+                results = [c for c in contexts if c.get("tag") == tag][-20:]
                 print(f"\n📚 Memories tagged '{tag}':\n")
             else:
-                results = self.memory_store.list_recent(limit=20)
+                # Take most recent 20 contexts
+                results = contexts[-20:]
                 print("\n📚 Recent memories:\n")
 
             if results:
@@ -362,7 +368,7 @@ class ChatSession:
             return
 
         try:
-            stats = self.memory_store.get_stats()
+            stats = self.memory_store.stats()
             print("\n📊 Memory Statistics:\n")
             print(f"  Total memories: {stats.get('total_memories', 0)}")
             print(f"  Memory types: {stats.get('memory_types', {})}")
