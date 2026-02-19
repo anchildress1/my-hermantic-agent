@@ -135,7 +135,9 @@ class MemoryStore:
         if conn:
             self.conn_pool.putconn(conn)
 
-    def _set_last_error(self, operation: str, error: Exception | str, details: Dict) -> None:
+    def _set_last_error(
+        self, operation: str, error: Exception | str, details: Dict
+    ) -> None:
         """Store the latest operation error for caller-level surfacing."""
         self._last_error = {
             "operation": operation,
