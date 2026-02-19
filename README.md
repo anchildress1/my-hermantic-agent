@@ -157,8 +157,13 @@ hermes-agent/
 ├── config/
 │   └── template.yaml      # Model configuration
 ├── src/agent/
-│   ├── chat.py            # Chat interface
-│   └── memory.py          # Semantic memory
+│   └── chat_session.py    # Chat session orchestration
+├── src/interfaces/cli/
+│   └── chat.py            # CLI chat loop
+├── src/services/memory/
+│   ├── vector_store.py    # Semantic memory storage + recall
+│   ├── auto_writer.py     # Automatic memory persistence
+│   └── langmem_extractor.py # LangMem extraction pipeline
 ├── docs/                  # Documentation
 ├── schema/                # Database schema
 ├── tests/                 # Unit tests
