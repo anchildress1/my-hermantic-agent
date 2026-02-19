@@ -318,7 +318,7 @@ class ChatSession:
                     )
                 for failure in auto_result.failures:
                     print(
-                        f"⚠️ Auto-memory failed for '{failure.memory_text[:120]}': {failure.error}"
+                        f"⚠️ Auto-memory failed for '{failure.memory_text}': {failure.error}"
                     )
             except Exception as e:
                 logger.error(f"Auto-memory write failed: {e}", exc_info=True)
