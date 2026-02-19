@@ -130,13 +130,7 @@ def test_chat_loop_basic_flow(tmp_path, monkeypatch, capsys):
             "/context brief",
             "/trim",
             "/stream",
-            "/remember type=fact tag=test remember this",
-            "/recall test",
-            "/memories",
-            "/memories test",
-            "/forget 1",
-            "/tags",
-            "/stats",
+            "Remember that my preferred editor is neovim",
             "/clear",
             "/load",
             "/save",
@@ -162,7 +156,7 @@ def test_chat_loop_basic_flow(tmp_path, monkeypatch, capsys):
     # Capture output to check some expected substrings
     out = capsys.readouterr().out
     assert "Ollama Chat" in out
-    assert "Memory stored with ID" in out
+    assert "Assistant" in out
 
 
 def test_chat_loop_trimming(tmp_path, monkeypatch, capsys):

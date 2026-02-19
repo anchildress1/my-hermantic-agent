@@ -66,13 +66,13 @@ sequenceDiagram
     Chat-->>User: Display response
     Chat->>Chat: Save to memory.json
 
-    alt Semantic Memory Command
-        User->>Chat: /remember <text>
-        Chat->>MemorySvc: Store memory
+    alt Automatic Semantic Memory
+        User->>Chat: "remember that ..."
+        Chat->>MemorySvc: Auto-extract + store memory
         MemorySvc->>TimescaleDB: Store with embedding
         TimescaleDB-->>MemorySvc: Confirm
         MemorySvc-->>Chat: Success
-        Chat-->>User: Memory stored
+        Chat-->>User: Auto-memory stored
     end
 ```
 

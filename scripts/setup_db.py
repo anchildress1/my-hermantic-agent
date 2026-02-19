@@ -4,6 +4,7 @@
 import os
 import sys
 from pathlib import Path
+
 import psycopg2
 from dotenv import load_dotenv
 
@@ -24,17 +25,11 @@ def main():
         )
         return 1
 
-    schema_file = Path("schema/000-init.sql")
-    if not schema_file.exists():
-        print(f"❌ Schema file not found: {schema_file}")
+    schema_dir = Path("schema")
+    migration_files = sorted(schema_dir.glob("*.sql"))
+    if not migration_files:
+        print(f"❌ No schema files found in: {schema_dir}")
         return 1
-
-    print(f"📋 Reading schema from {schema_file}")
-    with open(schema_file, "r") as f:
-        schema_sql = f.read()
-
-    # Replace placeholder password with env var
-    schema_sql = schema_sql.replace("hermes_app_password_placeholder", app_password)
 
     print("🔌 Connecting to database...")
     try:
@@ -42,10 +37,19 @@ def main():
         print("✓ Connected successfully")
 
         with conn.cursor() as cur:
-            print("📝 Executing schema...")
-            cur.execute(schema_sql)
-            conn.commit()
-            print("✓ Schema initialized successfully")
+            for migration_file in migration_files:
+                print(f"📝 Applying migration: {migration_file}")
+                with open(migration_file, "r") as f:
+                    migration_sql = f.read()
+
+                # Replace placeholder password with env var
+                migration_sql = migration_sql.replace(
+                    "hermes_app_password_placeholder", app_password
+                )
+                cur.execute(migration_sql)
+                conn.commit()
+
+            print(f"✓ Applied {len(migration_files)} migration file(s)")
 
             # Verify tables exist
             cur.execute("""
@@ -69,11 +73,24 @@ def main():
             else:
                 print("⚠️  Warning: memories table not found")
 
+            cur.execute(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'hermes'
+                AND table_name = 'memory_events'
+            """
+            )
+            if cur.fetchone():
+                print("✓ memory_events table created")
+            else:
+                print("⚠️  Warning: memory_events table not found")
+
         conn.close()
         print("\n✅ Database setup complete!")
         print("\nTest the connection:")
         print(
-            '  uv run python -c "from src.agent.memory import MemoryStore; print(MemoryStore().stats())"'
+            '  uv run python -c "from src.services.memory.vector_store import MemoryStore; print(MemoryStore().stats())"'
         )
         return 0
 

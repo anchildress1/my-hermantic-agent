@@ -10,14 +10,18 @@ def test_store_memory_tool_success():
     tool = create_store_memory_tool(mock_store)
 
     result = tool(
-        memory_text="User likes blue", type="preference", importance=2.0, confidence=0.9
+        memory_text="User likes blue",
+        type="preference",
+        tag="coding",
+        importance=2.0,
+        confidence=0.9,
     )
 
     assert result == "Stored memory #123"
     mock_store.remember.assert_called_once_with(
         memory_text="User likes blue",
         type="preference",
-        context="chat",
+        context="coding",
         importance=2.0,
         confidence=0.9,
     )

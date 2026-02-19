@@ -86,7 +86,7 @@ def test_recall_fulltext_path(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
-        def execute(self, sql, params):
+        def execute(self, sql, params=None):
             # noop for test; just validate SQL path
             return None
 

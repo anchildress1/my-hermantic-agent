@@ -51,7 +51,7 @@ ______________________________________________________________________
 **CONTEXT** vs **MEMORY**:
 
 - **CONTEXT**: Local JSON conversation history (`data/memory.json`) managed by `/save`, `/load`, `/clear`
-- **MEMORY**: Cloud PostgreSQL semantic embeddings managed by `/remember`, `/recall`, `/forget`, `/stats`
+- **MEMORY**: Cloud PostgreSQL semantic memory managed automatically from normal conversation
 
 These are separate systems serving different purposes.
 
@@ -77,86 +77,32 @@ ______________________________________________________________________
 
 > ✅ The previous conversation is archived to `data/memory-clear-<timestamp>.json` each time `/clear` runs.
 
-### Toggle Features
+## Memory Behavior
+
+Semantic memory is written automatically to cloud PostgreSQL (separate from conversation context).
+
+### How To Use It
 
 ```bash
-/stream  # Toggle streaming mode on/off
+💬 You: Remember that I prefer Python over JavaScript for backend work.
+
+🤖 Assistant: ...
+🧠 Auto-memory stored: 12
 ```
 
-______________________________________________________________________
+When you explicitly ask to remember something, that memory is automatically treated as high importance.
 
-## Memory Commands
-
-Store semantic memories in cloud PostgreSQL (separate from conversation context).
-
-### Quick Syntax
-
-```bash
-# Inline parameters
-/remember type=preference context=coding confidence=0.9 I prefer Python over JavaScript
-
-# Interactive prompts
-/remember I prefer Python over JavaScript
-```
-
-**Parameters:**
-
-- `type=` - preference, fact, task, insight
-- `context=` - work, personal, project-name, etc.
-- `confidence=` - 0.0 to 1.0 (default: 1.0)
-- `source=` - optional source context
-
-### Example
-
-```bash
-💬 You: /remember type=preference context=coding I prefer Python over JavaScript
-✓ Memory stored with ID 1
-```
-
-**Memory Types:**
+### Memory Types
 
 - `preference` - Likes/dislikes ("prefers dark mode")
 - `fact` - Information ("Python 3.12 released Oct 2023")
 - `task` - Todos ("review PR #456")
 - `insight` - Observations ("most productive in morning")
 
-### Search Memories
+### Audit View
 
 ```bash
-💬 You: /recall programming preferences
-
-🔍 Found 1 relevant memories:
-
-  [1] PREFERENCE | coding
-      I prefer Python over JavaScript
-      Similarity: 0.923 | Accessed: 1 times
-```
-
-### List Memories
-
-```bash
-/memories           # Show statistics
-/memories work      # Show memories in 'work' context
-/contexts           # List all contexts
-```
-
-### Delete Memory
-
-```bash
-/forget 1           # Delete memory with ID 1
-```
-
-### View Statistics
-
-```bash
-/stats
-
-📊 Memory Statistics:
-  Total memories: 42
-  Unique types: 4
-  Unique contexts: 3
-  Avg confidence: 0.95
-  Last memory: 2025-12-06T13:27:20Z
+/audit              # Show recent memory audit events
 ```
 
 ______________________________________________________________________
@@ -165,21 +111,13 @@ ______________________________________________________________________
 
 ### Organizing Memories
 
-Use contexts to organize:
+Use tags to organize:
 
 ```bash
 work              # Work-related
 personal          # Personal stuff
 project-alpha     # Specific project
 coding            # Coding preferences
-```
-
-### Context Patterns
-
-Use wildcards in searches:
-
-```bash
-/memories project-%    # All project memories
 ```
 
 ### Token Management
@@ -208,34 +146,19 @@ ______________________________________________________________________
 ### Daily Standup
 
 ```bash
-/recall today's tasks
-# Review what needs to be done
-
-/remember Completed PR review for #456
-Type: task
-Context: work
+Remember that I completed PR review for #456.
 ```
 
 ### Project Context
 
 ```bash
-/memories project-alpha
-# See all project-related memories
-
-/remember API endpoint is /api/v1/users
-Type: fact
-Context: project-alpha
+Remember that project-alpha API endpoint is /api/v1/users.
 ```
 
 ### Learning & Notes
 
 ```bash
-/remember Python 3.12 adds better error messages
-Type: fact
-Context: learning
-
-/recall Python features
-# Later, search what you learned
+Remember that Python 3.12 adds better error messages.
 ```
 
 ______________________________________________________________________
@@ -280,16 +203,14 @@ system: |
   Always provide working code examples.
 ```
 
-### Multiple Contexts
+### Multiple Tags
 
 Organize by project:
 
 ```bash
-/remember Uses PostgreSQL 15
-Context: project-alpha
+Remember that project-alpha uses PostgreSQL 15.
 
-/remember Uses MongoDB 6
-Context: project-beta
+Remember that project-beta uses MongoDB 6.
 ```
 
 ### Bulk Memory Management
@@ -321,10 +242,10 @@ ______________________________________________________________________
 
 ## Best Practices
 
-1. **Use descriptive contexts** - Makes searching easier
+1. **Use descriptive tags** - Makes searching easier
 1. **Store atomic memories** - One fact per memory
 1. **Regular cleanup** - Delete outdated tasks
-1. **Check stats** - Monitor memory growth
+1. **Check `/audit` regularly** - Monitor memory write/read behavior
 1. **Backup** - Cloud database + local `data/memory.json` context
 
 ______________________________________________________________________

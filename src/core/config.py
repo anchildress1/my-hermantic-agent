@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     )
     openai_embedding_model: str = "text-embedding-3-small"
     openai_embedding_dim: int = 1536
+    langmem_enabled: bool = True
+    langmem_model: Optional[str] = None
+    langmem_model_provider: str = "ollama"
+    langmem_temperature: float = 0.2
+    langmem_max_memories_per_turn: int = 2
+    langmem_default_tag: str = "chat"
     template_config: Path = Path("config/template.yaml")
     environment: str = Field(
         "development", description="Runtime environment (development, production, test)"

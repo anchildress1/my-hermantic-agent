@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 
 def test_cmd_help_with_memory_store(capsys):
-    """Test help command includes memory commands when store is available."""
+    """Test help command includes memory guidance when store is available."""
 
     class DummyMemoryStore:
         pass
@@ -19,11 +19,12 @@ def test_cmd_help_with_memory_store(capsys):
 
     session.cmd_help()
     out = capsys.readouterr().out
-    assert "Memory Commands" in out
+    assert "Memory" in out
+    assert "automatic" in out
 
 
 def test_cmd_help_without_memory_store(capsys):
-    """Test help command excludes memory commands when store is unavailable."""
+    """Test help command excludes memory section when store is unavailable."""
     session = ChatSession(
         config=AgentConfig(model="test", system="", parameters={}),
         context_file="test.json",
@@ -33,7 +34,7 @@ def test_cmd_help_without_memory_store(capsys):
 
     session.cmd_help()
     out = capsys.readouterr().out
-    assert "Memory Commands" not in out
+    assert "Memory (automatic)" not in out
 
 
 def test_cmd_load_with_files(capsys):
@@ -136,14 +137,19 @@ def test_cmd_clear(capsys):
             assert "Previous conversation archived to archive.json" in out
 
 
-def test_cmd_stats(capsys):
-    """Test stats command formatting."""
+def test_cmd_audit_with_events(capsys):
+    """Test audit command displays events."""
     mock_store = MagicMock()
-    mock_store.stats.return_value = {
-        "total_memories": 10,
-        "total_tags": 2,
-        "memory_types": {"fact": 6, "preference": 4},
-    }
+    mock_store.list_events.return_value = [
+        {
+            "id": 1,
+            "memory_id": 2,
+            "operation": "remember",
+            "status": "success",
+            "details": {"memory_preview": "User prefers Python"},
+            "created_at": "2026-02-19T00:00:00Z",
+        }
+    ]
 
     session = ChatSession(
         config=AgentConfig(model="test", system="sys", parameters={}),
@@ -152,19 +158,16 @@ def test_cmd_stats(capsys):
         memory_store=mock_store,
     )
 
-    session.cmd_stats()
+    session.cmd_audit(operation="remember")
     out = capsys.readouterr().out
-    assert "Memory Statistics" in out
-    assert "Total memories: 10" in out
-    assert "Total tags:     2" in out
-    assert "- fact: 6" in out
-    assert "- preference: 4" in out
+    assert "Memory Events" in out
+    assert "remember | success" in out
 
 
-def test_cmd_stats_none(capsys):
-    """Test stats command when store returns None."""
+def test_cmd_audit_no_events(capsys):
+    """Test audit command when no events are returned."""
     mock_store = MagicMock()
-    mock_store.stats.return_value = None
+    mock_store.list_events.return_value = []
 
     session = ChatSession(
         config=AgentConfig(model="test", system="sys", parameters={}),
@@ -173,6 +176,6 @@ def test_cmd_stats_none(capsys):
         memory_store=mock_store,
     )
 
-    session.cmd_stats()
+    session.cmd_audit()
     out = capsys.readouterr().out
-    assert "No statistics available" in out
+    assert "No memory events found" in out

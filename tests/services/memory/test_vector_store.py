@@ -102,7 +102,7 @@ def test_recall_with_filters(store, mock_db_connection, mock_openai):
 
 
 def test_forget(store, mock_db_connection):
-    """Test deleting a memory."""
+    """Test soft-deleting a memory."""
     conn, cursor = mock_db_connection
     cursor.rowcount = 1
 
@@ -111,6 +111,9 @@ def test_forget(store, mock_db_connection):
 
     assert result is True
     assert cursor.execute.called
+    sql_text = cursor.execute.call_args_list[0][0][0]
+    assert "UPDATE hermes.memories" in sql_text
+    assert "deleted_at = NOW()" in sql_text
     assert conn.commit.called
 
 

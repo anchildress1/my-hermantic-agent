@@ -6,7 +6,7 @@ from typing import List, Dict, Optional, Tuple
 
 import psycopg2
 from psycopg2 import pool
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, Json
 from openai import OpenAI, OpenAIError, RateLimitError, APITimeoutError
 from dotenv import load_dotenv
 
@@ -56,6 +56,8 @@ class MemoryStore:
         "text-embedding-3-large": 3072,
         "text-embedding-ada-002": 1536,
     }
+    EVENT_SUCCESS = "success"
+    EVENT_ERROR = "error"
 
     def __init__(self, settings: Optional[Settings] = None):
         """Initialize semantic memory store.
@@ -131,6 +133,156 @@ class MemoryStore:
         if conn:
             self.conn_pool.putconn(conn)
 
+    @staticmethod
+    def _preview(text: Optional[str], max_len: int = 200) -> str:
+        """Build a bounded text preview for logs/events."""
+        if not text:
+            return ""
+        return text[:max_len]
+
+    def _record_event(
+        self,
+        operation: str,
+        status: str,
+        details: Dict,
+        memory_id: Optional[int] = None,
+    ) -> None:
+        """Record a best-effort audit event.
+
+        Args:
+            operation: Operation name (remember, recall, forget, auto_remember, ...)
+            status: Event status ('success' or 'error')
+            details: Structured event metadata
+            memory_id: Optional referenced memory id
+        """
+        conn = None
+        try:
+            conn = self._get_connection()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO hermes.memory_events (memory_id, operation, status, details)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (memory_id, operation, status, Json(details)),
+                )
+                if hasattr(conn, "commit"):
+                    conn.commit()
+        except Exception as e:  # pragma: no cover - audit should never break core flow
+            logger.warning(
+                "Skipping memory event recording due to error (operation=%s): %s",
+                operation,
+                e,
+            )
+            if conn and hasattr(conn, "rollback"):
+                conn.rollback()
+        finally:
+            if conn:
+                self._return_connection(conn)
+
+    def record_event(
+        self,
+        operation: str,
+        status: str,
+        details: Dict,
+        memory_id: Optional[int] = None,
+    ) -> None:
+        """Public wrapper for audit event creation."""
+        self._record_event(
+            operation=operation,
+            status=status,
+            details=details,
+            memory_id=memory_id,
+        )
+
+    def memory_exists(self, memory_text: str, type: str, context: str) -> bool:
+        """Check if the same memory already exists.
+
+        Args:
+            memory_text: Memory text to match exactly
+            type: Memory type
+            context: Memory tag/context
+
+        Returns:
+            True if matching memory row exists
+        """
+        conn = None
+        try:
+            conn = self._get_connection()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM hermes.memories
+                    WHERE memory_text = %s
+                      AND type = %s
+                      AND tag = %s
+                      AND deleted_at IS NULL
+                    LIMIT 1
+                    """,
+                    (memory_text, type, context),
+                )
+                return cur.fetchone() is not None
+        except Exception as e:
+            logger.warning(f"memory_exists check failed: {e}")
+            return False
+        finally:
+            if conn:
+                self._return_connection(conn)
+
+    def list_events(
+        self,
+        limit: int = 50,
+        operation: Optional[str] = None,
+        memory_id: Optional[int] = None,
+    ) -> List[Dict]:
+        """List recent memory audit events.
+
+        Args:
+            limit: Maximum number of rows to return (1-500)
+            operation: Optional operation filter
+            memory_id: Optional memory id filter
+
+        Returns:
+            Event dictionaries ordered by newest first
+        """
+        if limit < 1 or limit > 500:
+            raise ValueError("limit must be between 1 and 500")
+
+        conn = None
+        try:
+            conn = self._get_connection()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                sql = """
+                    SELECT id, memory_id, operation, status, details, created_at
+                    FROM hermes.memory_events
+                    WHERE 1=1
+                """
+                params: List = []
+
+                if operation:
+                    sql += " AND operation = %s"
+                    params.append(operation)
+
+                if memory_id is not None:
+                    sql += " AND memory_id = %s"
+                    params.append(memory_id)
+
+                sql += " ORDER BY created_at DESC LIMIT %s"
+                params.append(limit)
+
+                cur.execute(sql, params)
+                return [dict(row) for row in cur.fetchall()]
+        except psycopg2.Error as e:
+            logger.error(f"Database error listing memory events: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error listing memory events: {e}")
+            return []
+        finally:
+            if conn:
+                self._return_connection(conn)
+
     @lru_cache(maxsize=100)
     def _get_embedding_cached(self, text: str) -> Tuple[float, ...]:
         """Generate embedding with caching (tuple for hashability)."""
@@ -192,6 +344,15 @@ class MemoryStore:
         Returns:
             Memory ID on success, None on failure
         """
+        event_base = {
+            "type": type,
+            "context": context or tag,
+            "importance": importance,
+            "confidence": confidence,
+            "source_preview": self._preview(source),
+            "memory_preview": self._preview(memory_text),
+        }
+
         if tag is not None and context is None:
             context = tag
 
@@ -253,21 +414,55 @@ class MemoryStore:
                 logger.debug(
                     f"Database insert confirmed: id={memory_id}, type={type}, tag={context}, confidence={confidence}, embedding_model={self.embedding_model}"
                 )
+                self._record_event(
+                    operation="remember",
+                    status=self.EVENT_SUCCESS,
+                    memory_id=memory_id,
+                    details={
+                        **event_base,
+                        "memory_id": memory_id,
+                        "embedding_model": self.embedding_model,
+                        "embedding_dim": self.embedding_dim,
+                    },
+                )
 
                 return memory_id
 
         except psycopg2.OperationalError as e:
             logger.error(f"Database connection failed: {e}")
+            self._record_event(
+                operation="remember",
+                status=self.EVENT_ERROR,
+                details={
+                    **event_base,
+                    "error": str(e),
+                    "error_type": "OperationalError",
+                },
+            )
             return None
         except psycopg2.Error as e:
             logger.error(f"Database error storing memory: {e}")
             if conn:
                 conn.rollback()
+            self._record_event(
+                operation="remember",
+                status=self.EVENT_ERROR,
+                details={**event_base, "error": str(e), "error_type": "DatabaseError"},
+            )
             return None
         except Exception as e:
             logger.error(f"Unexpected error storing memory: {e}")
             if conn:
                 conn.rollback()
+            self._record_event(
+                operation="remember",
+                status=self.EVENT_ERROR,
+                details={
+                    **event_base,
+                    "error": str(e),
+                    "error_type": e.__class__.__name__,
+                },
+            )
             return None
         finally:
             if conn:
@@ -313,6 +508,14 @@ class MemoryStore:
             raise ValueError("limit must be between 1 and 100")
 
         conn = None
+        event_base = {
+            "query_preview": self._preview(query),
+            "type": type,
+            "context": context,
+            "min_importance": min_importance,
+            "limit": limit,
+            "use_semantic": use_semantic,
+        }
         try:
             conn = self._get_connection()
 
@@ -332,7 +535,7 @@ class MemoryStore:
                             embedding_model,
                             (1 - (embedding <=> %s::vector)) * (1 + (importance / 3.0)) as similarity
                         FROM hermes.memories
-                        WHERE 1=1
+                        WHERE deleted_at IS NULL
                     """
                     params = [query_embedding]
                 else:
@@ -344,6 +547,7 @@ class MemoryStore:
                             ts_rank(to_tsvector('english', memory_text), plainto_tsquery('english', %s)) * (1 + (importance / 3.0)) as similarity
                         FROM hermes.memories
                         WHERE to_tsvector('english', memory_text) @@ plainto_tsquery('english', %s)
+                          AND deleted_at IS NULL
                     """
                     params = [query, query]
 
@@ -375,7 +579,7 @@ class MemoryStore:
                         """
                         UPDATE hermes.memories
                         SET last_accessed = NOW(), access_count = access_count + 1
-                        WHERE id = ANY(%s)
+                        WHERE id = ANY(%s) AND deleted_at IS NULL
                     """,
                         (memory_ids,),
                     )
@@ -384,44 +588,113 @@ class MemoryStore:
                 logger.info(
                     f"Recalled {len(results)} memories for query: {query[:50]}..."
                 )
+                self._record_event(
+                    operation="recall",
+                    status=self.EVENT_SUCCESS,
+                    details={
+                        **event_base,
+                        "result_count": len(results),
+                        "memory_ids": [r["id"] for r in results],
+                    },
+                )
                 return [dict(r) for r in results]
 
         except psycopg2.OperationalError as e:
             logger.error(f"Database connection failed: {e}")
+            self._record_event(
+                operation="recall",
+                status=self.EVENT_ERROR,
+                details={
+                    **event_base,
+                    "error": str(e),
+                    "error_type": "OperationalError",
+                },
+            )
             return []
         except psycopg2.Error as e:
             logger.error(f"Database error recalling memories: {e}")
+            self._record_event(
+                operation="recall",
+                status=self.EVENT_ERROR,
+                details={**event_base, "error": str(e), "error_type": "DatabaseError"},
+            )
             return []
         except Exception as e:
             logger.error(f"Unexpected error recalling memories: {e}")
+            self._record_event(
+                operation="recall",
+                status=self.EVENT_ERROR,
+                details={
+                    **event_base,
+                    "error": str(e),
+                    "error_type": e.__class__.__name__,
+                },
+            )
             return []
         finally:
             if conn:
                 self._return_connection(conn)
 
     def forget(self, memory_id: int) -> bool:
-        """Delete a memory by ID."""
+        """Soft-delete a memory by ID."""
         conn = None
         try:
             conn = self._get_connection()
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM hermes.memories WHERE id = %s", (memory_id,))
+                cur.execute(
+                    """
+                    UPDATE hermes.memories
+                    SET deleted_at = NOW()
+                    WHERE id = %s AND deleted_at IS NULL
+                    """,
+                    (memory_id,),
+                )
                 conn.commit()
                 deleted = cur.rowcount > 0
                 if deleted:
-                    logger.info(f"Deleted memory {memory_id}")
+                    logger.info(f"Soft-deleted memory {memory_id}")
                 else:
                     logger.warning(f"Memory {memory_id} not found")
+                self._record_event(
+                    operation="forget",
+                    status=self.EVENT_SUCCESS,
+                    memory_id=memory_id if deleted else None,
+                    details={
+                        "memory_id": memory_id,
+                        "deleted": deleted,
+                        "mode": "soft_delete",
+                    },
+                )
                 return deleted
         except psycopg2.Error as e:
             logger.error(f"Database error deleting memory: {e}")
             if conn:
                 conn.rollback()
+            self._record_event(
+                operation="forget",
+                status=self.EVENT_ERROR,
+                memory_id=memory_id,
+                details={
+                    "memory_id": memory_id,
+                    "error": str(e),
+                    "error_type": "DatabaseError",
+                },
+            )
             return False
         except Exception as e:
             logger.error(f"Unexpected error deleting memory: {e}")
             if conn:
                 conn.rollback()
+            self._record_event(
+                operation="forget",
+                status=self.EVENT_ERROR,
+                memory_id=memory_id,
+                details={
+                    "memory_id": memory_id,
+                    "error": str(e),
+                    "error_type": e.__class__.__name__,
+                },
+            )
             return False
         finally:
             if conn:
@@ -464,7 +737,7 @@ class MemoryStore:
                         source, created_at, last_accessed, access_count,
                         embedding_model
                     FROM hermes.memories
-                    WHERE 1=1
+                    WHERE deleted_at IS NULL
                 """
                 params = []
 
@@ -506,7 +779,14 @@ class MemoryStore:
         try:
             conn = self._get_connection()
             with conn.cursor() as cur:
-                cur.execute("SELECT DISTINCT tag FROM hermes.memories ORDER BY tag")
+                cur.execute(
+                    """
+                    SELECT DISTINCT tag
+                    FROM hermes.memories
+                    WHERE deleted_at IS NULL
+                    ORDER BY tag
+                    """
+                )
                 tags = [row[0] for row in cur.fetchall()]
                 logger.debug(f"Found {len(tags)} unique tags")
                 return tags
@@ -536,6 +816,7 @@ class MemoryStore:
                         AVG(importance) as avg_importance,
                         MAX(created_at) as last_memory_at
                     FROM hermes.memories
+                    WHERE deleted_at IS NULL
                 """)
                 stats = dict(cur.fetchone())
 
@@ -543,6 +824,7 @@ class MemoryStore:
                 cur.execute("""
                     SELECT type, COUNT(*) as count 
                     FROM hermes.memories 
+                    WHERE deleted_at IS NULL
                     GROUP BY type
                 """)
                 type_counts = {row["type"]: row["count"] for row in cur.fetchall()}
