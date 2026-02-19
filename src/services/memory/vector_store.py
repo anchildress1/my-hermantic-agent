@@ -58,6 +58,7 @@ class MemoryStore:
     }
     EVENT_SUCCESS = "success"
     EVENT_ERROR = "error"
+    DUPLICATE_IMPORTANCE_BOOST = 0.1
 
     def __init__(self, settings: Optional[Settings] = None):
         """Initialize semantic memory store.
@@ -94,6 +95,7 @@ class MemoryStore:
             if settings
             else os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
         )
+        self._last_error: Optional[Dict] = None
 
         # Get embedding dimensions (auto-detect from model or use override)
         default_dim = self.EMBEDDING_DIMS.get(self.embedding_model, 1536)
@@ -132,6 +134,24 @@ class MemoryStore:
         """Return connection to pool."""
         if conn:
             self.conn_pool.putconn(conn)
+
+    def _set_last_error(self, operation: str, error: Exception | str, details: Dict) -> None:
+        """Store the latest operation error for caller-level surfacing."""
+        self._last_error = {
+            "operation": operation,
+            "error": str(error),
+            "details": details,
+        }
+
+    def _clear_last_error(self) -> None:
+        """Clear latest operation error marker."""
+        self._last_error = None
+
+    def get_last_error(self) -> Optional[Dict]:
+        """Return latest operation error payload, if any."""
+        if self._last_error is None:
+            return None
+        return dict(self._last_error)
 
     @staticmethod
     def _preview(text: Optional[str], max_len: int = 200) -> str:
@@ -226,6 +246,85 @@ class MemoryStore:
         except Exception as e:
             logger.warning(f"memory_exists check failed: {e}")
             return False
+        finally:
+            if conn:
+                self._return_connection(conn)
+
+    def revive_exact_memory(
+        self,
+        memory_text: str,
+        type: str,
+        context: str,
+        importance_boost: float = DUPLICATE_IMPORTANCE_BOOST,
+    ) -> Optional[Dict]:
+        """Refresh an exact memory match instead of inserting a new row.
+
+        Args:
+            memory_text: Exact memory text to match.
+            type: Memory type.
+            context: Memory tag/context.
+            importance_boost: Importance increment for repeated evidence.
+
+        Returns:
+            Updated row payload when a match exists, otherwise None.
+        """
+        if importance_boost <= 0:
+            raise ValueError("importance_boost must be greater than 0")
+
+        conn = None
+        details = {
+            "memory_preview": self._preview(memory_text),
+            "type": type,
+            "context": context,
+            "importance_boost": importance_boost,
+        }
+        try:
+            conn = self._get_connection()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    UPDATE hermes.memories
+                    SET last_accessed = NOW(),
+                        access_count = access_count + 1,
+                        importance = LEAST(3.0, importance + %s)
+                    WHERE id = (
+                        SELECT id
+                        FROM hermes.memories
+                        WHERE memory_text = %s
+                          AND type = %s
+                          AND tag = %s
+                          AND deleted_at IS NULL
+                        ORDER BY id DESC
+                        LIMIT 1
+                    )
+                    RETURNING id, importance, access_count, last_accessed
+                    """,
+                    (importance_boost, memory_text, type, context),
+                )
+                row = cur.fetchone()
+                conn.commit()
+                self._clear_last_error()
+                return dict(row) if row else None
+        except psycopg2.Error as e:
+            logger.error(f"Database error reviving exact memory: {e}")
+            if conn:
+                conn.rollback()
+            self._set_last_error(
+                operation="revive_exact_memory",
+                error=e,
+                details=details,
+            )
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error reviving exact memory: {e}")
+            if conn:
+                conn.rollback()
+            self._set_last_error(
+                operation="revive_exact_memory",
+                error=e,
+                details=details,
+            )
+            return None
         finally:
             if conn:
                 self._return_connection(conn)
@@ -425,11 +524,17 @@ class MemoryStore:
                         "embedding_dim": self.embedding_dim,
                     },
                 )
+                self._clear_last_error()
 
                 return memory_id
 
         except psycopg2.OperationalError as e:
             logger.error(f"Database connection failed: {e}")
+            self._set_last_error(
+                operation="remember",
+                error=e,
+                details=event_base,
+            )
             self._record_event(
                 operation="remember",
                 status=self.EVENT_ERROR,
@@ -444,6 +549,11 @@ class MemoryStore:
             logger.error(f"Database error storing memory: {e}")
             if conn:
                 conn.rollback()
+            self._set_last_error(
+                operation="remember",
+                error=e,
+                details=event_base,
+            )
             self._record_event(
                 operation="remember",
                 status=self.EVENT_ERROR,
@@ -454,6 +564,11 @@ class MemoryStore:
             logger.error(f"Unexpected error storing memory: {e}")
             if conn:
                 conn.rollback()
+            self._set_last_error(
+                operation="remember",
+                error=e,
+                details=event_base,
+            )
             self._record_event(
                 operation="remember",
                 status=self.EVENT_ERROR,

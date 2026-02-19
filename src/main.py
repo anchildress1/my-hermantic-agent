@@ -1,4 +1,5 @@
 import logging
+import signal
 from dotenv import load_dotenv
 
 from src.core.logging import setup_logging
@@ -15,8 +16,20 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+def _install_signal_handlers() -> None:
+    """Install process signal handlers for graceful shutdown."""
+
+    def _handle_termination(signum, _frame) -> None:
+        signal_name = signal.Signals(signum).name
+        logger.warning(f"Received {signal_name}, shutting down gracefully")
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _handle_termination)
+
+
 def main():
     setup_logging()
+    _install_signal_handlers()
     logger.info("Starting Ollama Agent")
 
     try:

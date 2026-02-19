@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import logging
 import re
 from typing import List
@@ -10,6 +11,30 @@ from src.services.memory.langmem_extractor import LangMemExtractor, MemoryCandid
 from src.services.memory.vector_store import MemoryStore
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class AutoMemoryFailure:
+    """Structured failure payload for auto-memory operations."""
+
+    memory_text: str
+    type: str
+    tag: str
+    error: str
+
+
+@dataclass(slots=True)
+class AutoMemoryResult:
+    """Structured outcome payload for one chat turn."""
+
+    inserted_ids: List[int] = field(default_factory=list)
+    revived_ids: List[int] = field(default_factory=list)
+    failures: List[AutoMemoryFailure] = field(default_factory=list)
+
+    @property
+    def all_ids(self) -> List[int]:
+        """Return all touched memory ids."""
+        return [*self.inserted_ids, *self.revived_ids]
 
 
 class AutoMemoryWriter:
@@ -39,6 +64,7 @@ class AutoMemoryWriter:
         self.memory_store = memory_store
         self.extractor = extractor
         self.source_char_limit = source_char_limit
+        self.last_result = AutoMemoryResult()
 
     @classmethod
     def _is_explicit_remember_intent(cls, user_message: str) -> bool:
@@ -68,6 +94,7 @@ class AutoMemoryWriter:
         Returns:
             Stored memory ids.
         """
+        result = AutoMemoryResult()
         messages = [
             {"role": "user", "content": user_message},
             {"role": "assistant", "content": assistant_message},
@@ -88,13 +115,13 @@ class AutoMemoryWriter:
             ]
 
         if not candidates:
+            self.last_result = result
             return []
 
         source = (f"user: {user_message}\nassistant: {assistant_message}")[
             : self.source_char_limit
         ]
 
-        stored_ids: List[int] = []
         for candidate in candidates:
             if explicit_remember:
                 candidate.importance = max(
@@ -109,23 +136,52 @@ class AutoMemoryWriter:
                 type=candidate.type,
                 context=candidate.tag,
             ):
-                logger.info(
-                    "Skipping duplicate auto-memory: type=%s tag=%s text=%s",
-                    candidate.type,
-                    candidate.tag,
-                    candidate.memory_text[:120],
+                revived = self.memory_store.revive_exact_memory(
+                    memory_text=candidate.memory_text,
+                    type=candidate.type,
+                    context=candidate.tag,
                 )
-                self.memory_store.record_event(
-                    operation="auto_remember",
-                    status=MemoryStore.EVENT_SUCCESS,
-                    details={
-                        "memory_text": candidate.memory_text[:200],
-                        "type": candidate.type,
-                        "tag": candidate.tag,
-                        "action": "skipped_duplicate",
-                        "explicit_remember": explicit_remember,
-                    },
-                )
+                if revived:
+                    memory_id = int(revived["id"])
+                    self.memory_store.record_event(
+                        operation="auto_remember",
+                        status=MemoryStore.EVENT_SUCCESS,
+                        memory_id=memory_id,
+                        details={
+                            "memory_id": memory_id,
+                            "type": candidate.type,
+                            "tag": candidate.tag,
+                            "new_importance": revived.get("importance"),
+                            "access_count": revived.get("access_count"),
+                            "action": "revived_duplicate",
+                            "explicit_remember": explicit_remember,
+                        },
+                    )
+                    result.revived_ids.append(memory_id)
+                else:
+                    error_payload = self.memory_store.get_last_error() or {}
+                    error_text = str(
+                        error_payload.get("error", "Failed to revive existing memory")
+                    )
+                    failure = AutoMemoryFailure(
+                        memory_text=candidate.memory_text,
+                        type=candidate.type,
+                        tag=candidate.tag,
+                        error=error_text,
+                    )
+                    result.failures.append(failure)
+                    self.memory_store.record_event(
+                        operation="auto_remember",
+                        status=MemoryStore.EVENT_ERROR,
+                        details={
+                            "memory_text": candidate.memory_text[:200],
+                            "type": candidate.type,
+                            "tag": candidate.tag,
+                            "action": "revive_failed",
+                            "error": error_text,
+                            "explicit_remember": explicit_remember,
+                        },
+                    )
                 continue
 
             memory_id = self.memory_store.remember(
@@ -150,8 +206,17 @@ class AutoMemoryWriter:
                         "explicit_remember": explicit_remember,
                     },
                 )
-                stored_ids.append(memory_id)
+                result.inserted_ids.append(memory_id)
             else:
+                error_payload = self.memory_store.get_last_error() or {}
+                error_text = str(error_payload.get("error", "Failed to store memory"))
+                failure = AutoMemoryFailure(
+                    memory_text=candidate.memory_text,
+                    type=candidate.type,
+                    tag=candidate.tag,
+                    error=error_text,
+                )
+                result.failures.append(failure)
                 self.memory_store.record_event(
                     operation="auto_remember",
                     status=MemoryStore.EVENT_ERROR,
@@ -160,8 +225,10 @@ class AutoMemoryWriter:
                         "type": candidate.type,
                         "tag": candidate.tag,
                         "action": "store_failed",
+                        "error": error_text,
                         "explicit_remember": explicit_remember,
                     },
                 )
 
-        return stored_ids
+        self.last_result = result
+        return result.all_ids

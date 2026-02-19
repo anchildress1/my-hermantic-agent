@@ -303,13 +303,22 @@ class ChatSession:
             and not memory_tool_called
         ):
             try:
-                auto_ids = self.auto_memory_writer.process_turn(
+                self.auto_memory_writer.process_turn(
                     user_message=user_input,
                     assistant_message=assistant_text,
                 )
-                if auto_ids:
+                auto_result = self.auto_memory_writer.last_result
+                if auto_result.inserted_ids:
                     print(
-                        f"🧠 Auto-memory stored: {', '.join(str(i) for i in auto_ids)}"
+                        f"🧠 Auto-memory stored: {', '.join(str(i) for i in auto_result.inserted_ids)}"
+                    )
+                if auto_result.revived_ids:
+                    print(
+                        f"🧠 Auto-memory refreshed: {', '.join(str(i) for i in auto_result.revived_ids)}"
+                    )
+                for failure in auto_result.failures:
+                    print(
+                        f"⚠️ Auto-memory failed for '{failure.memory_text[:120]}': {failure.error}"
                     )
             except Exception as e:
                 logger.error(f"Auto-memory write failed: {e}", exc_info=True)
@@ -322,6 +331,9 @@ class ChatSession:
 
         if usage_pct > 90:
             print("⚠️  Context nearly full - will auto-trim on next message")
+
+        # Persist each turn so abrupt termination loses less context.
+        save_chat_history(self.messages, self.context_file)
 
     def _handle_response(self) -> tuple[str, bool]:
         """Handle LLM streaming response."""
@@ -440,63 +452,65 @@ class ChatSession:
         print(f"Type {self.ANSI_CYAN}/?{self.ANSI_RESET} for commands")
         print()
 
-        while True:
-            try:
-                user_input = input("\n💬 You: ").strip()
+        try:
+            while True:
+                try:
+                    user_input = input("\n💬 You: ").strip()
 
-                if user_input.lower() in ["/bye", "/quit", "bye", "quit", "exit"]:
-                    if self.cmd_quit():
-                        break
-                    continue
-
-                if user_input == "/?":
-                    self.cmd_help()
-                    continue
-
-                if user_input == "/context":
-                    self.cmd_context(show_full=True)
-                    continue
-
-                if user_input == "/context brief":
-                    self.cmd_context(show_full=False)
-                    continue
-
-                if user_input == "/clear":
-                    self.cmd_clear()
-                    continue
-
-                if user_input == "/save":
-                    self.cmd_save()
-                    continue
-
-                if user_input.startswith("/load"):
-                    tokens = user_input.split()[1:]
-                    self.cmd_load(files=tokens if tokens else None)
-                    continue
-
-                if user_input == "/trim":
-                    self.cmd_trim()
-                    continue
-
-                if self.memory_store:
-                    if user_input.startswith("/audit"):
-                        parts = user_input.split(maxsplit=1)
-                        operation = parts[1].strip() if len(parts) > 1 else None
-                        self.cmd_audit(operation=operation)
+                    if user_input.lower() in ["/bye", "/quit", "bye", "quit", "exit"]:
+                        if self.cmd_quit():
+                            break
                         continue
 
-                if not user_input:
-                    continue
+                    if user_input == "/?":
+                        self.cmd_help()
+                        continue
 
-                self._send_message(user_input)
+                    if user_input == "/context":
+                        self.cmd_context(show_full=True)
+                        continue
 
-            except KeyboardInterrupt:
-                print("\n\nSaving before exit...")
-                save_chat_history(self.messages, self.context_file)
-                if self.memory_store:
-                    self.memory_store.close()
-                print("Goodbye!")
-                break
-            except Exception as e:
-                logger.error(f"Error in chat loop: {e}", exc_info=True)
-                print(f"\n❌ Error: {e}\n")
+                    if user_input == "/context brief":
+                        self.cmd_context(show_full=False)
+                        continue
+
+                    if user_input == "/clear":
+                        self.cmd_clear()
+                        continue
+
+                    if user_input == "/save":
+                        self.cmd_save()
+                        continue
+
+                    if user_input.startswith("/load"):
+                        tokens = user_input.split()[1:]
+                        self.cmd_load(files=tokens if tokens else None)
+                        continue
+
+                    if user_input == "/trim":
+                        self.cmd_trim()
+                        continue
+
+                    if self.memory_store:
+                        if user_input.startswith("/audit"):
+                            parts = user_input.split(maxsplit=1)
+                            operation = parts[1].strip() if len(parts) > 1 else None
+                            self.cmd_audit(operation=operation)
+                            continue
+
+                    if not user_input:
+                        continue
+
+                    self._send_message(user_input)
+
+                except KeyboardInterrupt:
+                    print("\n\nSaving before exit...")
+                    save_chat_history(self.messages, self.context_file)
+                    print("Goodbye!")
+                    break
+                except Exception as e:
+                    logger.error(f"Error in chat loop: {e}", exc_info=True)
+                    print(f"\n❌ Error: {e}\n")
+        finally:
+            if self.memory_store:
+                self.memory_store.close()

@@ -29,9 +29,14 @@ def test_langmem_extractor_extract_dedup_and_limit():
     assert results[1].type == "task"
 
 
-def test_auto_writer_skips_duplicates_and_stores_new():
+def test_auto_writer_revives_duplicates_and_stores_new():
     store = MagicMock(spec=MemoryStore)
     store.memory_exists.side_effect = [True, False]
+    store.revive_exact_memory.return_value = {
+        "id": 5,
+        "importance": 1.5,
+        "access_count": 4,
+    }
     store.remember.return_value = 7
 
     extractor = MagicMock(spec=LangMemExtractor)
@@ -48,9 +53,12 @@ def test_auto_writer_skips_duplicates_and_stores_new():
         assistant_message="Noted",
     )
 
-    assert ids == [7]
+    assert ids == [7, 5]
     assert store.remember.call_count == 1
+    store.revive_exact_memory.assert_called_once()
     assert store.record_event.call_count == 2
+    assert writer.last_result.inserted_ids == [7]
+    assert writer.last_result.revived_ids == [5]
 
 
 def test_auto_writer_no_candidates_returns_empty():
@@ -145,6 +153,7 @@ def test_auto_writer_records_error_event_when_store_fails():
     store = MagicMock(spec=MemoryStore)
     store.memory_exists.return_value = False
     store.remember.return_value = None
+    store.get_last_error.return_value = {"error": "database timeout"}
 
     extractor = MagicMock(spec=LangMemExtractor)
     extractor.extract.return_value = [
@@ -163,6 +172,28 @@ def test_auto_writer_records_error_event_when_store_fails():
     assert store.record_event.call_count >= 1
     statuses = [call.kwargs["status"] for call in store.record_event.call_args_list]
     assert MemoryStore.EVENT_ERROR in statuses
+    assert writer.last_result.failures[0].error == "database timeout"
+
+
+def test_auto_writer_records_failure_when_duplicate_revive_fails():
+    store = MagicMock(spec=MemoryStore)
+    store.memory_exists.return_value = True
+    store.revive_exact_memory.return_value = None
+    store.get_last_error.return_value = {"error": "write conflict"}
+
+    extractor = MagicMock(spec=LangMemExtractor)
+    extractor.extract.return_value = [
+        MemoryCandidate(memory_text="User prefers vim", type="preference", tag="coding")
+    ]
+
+    writer = AutoMemoryWriter(memory_store=store, extractor=extractor)
+    ids = writer.process_turn(
+        user_message="Remember that I prefer vim",
+        assistant_message="Noted.",
+    )
+
+    assert ids == []
+    assert writer.last_result.failures[0].error == "write conflict"
 
 
 def test_langmem_extractor_init_and_extract_with_fake_sdk(monkeypatch):

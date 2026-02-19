@@ -56,8 +56,9 @@ When semantic memory is enabled:
 
 - Runs on normal user/assistant turns.
 - Extracts memory candidates from latest turn.
-- Writes only new (non-duplicate) memories.
+- Inserts new memories and revives exact duplicates (refreshes access metadata and bumps importance slightly).
 - Emits `auto_remember` audit events for successful auto writes.
+- Surfaces failed write attempts in chat output with the attempted memory text and exact DB error.
 - Explicit user remember intent (messages containing "remember") is boosted to high importance automatically.
 
 ## Relevance Notes
