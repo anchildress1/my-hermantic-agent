@@ -134,7 +134,7 @@ def test_chat_loop_basic_flow(tmp_path, monkeypatch, capsys):
             "/clear",
             "/load",
             "/save",
-            "/quit",
+            "quit",
         ]
     )
 

@@ -444,7 +444,7 @@ class ChatSession:
             try:
                 user_input = input("\n💬 You: ").strip()
 
-                if user_input.lower() in ["/bye", "/quit"]:
+                if user_input.lower() in ["/bye", "/quit", "bye", "quit", "exit"]:
                     if self.cmd_quit():
                         break
                     continue
