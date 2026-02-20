@@ -59,6 +59,8 @@ class MemoryStore:
     EVENT_SUCCESS = "success"
     EVENT_ERROR = "error"
     DUPLICATE_IMPORTANCE_BOOST = 0.1
+    DEFAULT_MEMORY_EVENTS_RETENTION_DAYS = 90
+    DEFAULT_EVENT_PRUNE_INTERVAL_SECONDS = 3600
 
     def __init__(self, settings: Optional[Settings] = None):
         """Initialize semantic memory store.
@@ -104,6 +106,33 @@ class MemoryStore:
             if settings
             else int(os.getenv("OPENAI_EMBEDDING_DIM", str(default_dim)))
         )
+        self.memory_events_retention_days = self._resolve_positive_int(
+            value=(
+                settings.memory_events_retention_days
+                if settings
+                else int(
+                    os.getenv(
+                        "MEMORY_EVENTS_RETENTION_DAYS",
+                        str(self.DEFAULT_MEMORY_EVENTS_RETENTION_DAYS),
+                    )
+                )
+            ),
+            field_name="memory_events_retention_days",
+        )
+        self.event_prune_interval_seconds = self._resolve_positive_int(
+            value=(
+                settings.memory_events_prune_interval_seconds
+                if settings
+                else int(
+                    os.getenv(
+                        "MEMORY_EVENTS_PRUNE_INTERVAL_SECONDS",
+                        str(self.DEFAULT_EVENT_PRUNE_INTERVAL_SECONDS),
+                    )
+                )
+            ),
+            field_name="memory_events_prune_interval_seconds",
+        )
+        self._next_event_prune_monotonic = 0.0
 
         logger.info(
             f"Using embedding model: {self.embedding_model} ({self.embedding_dim} dimensions)"
@@ -162,6 +191,97 @@ class MemoryStore:
             return ""
         return text[:max_len]
 
+    @staticmethod
+    def _resolve_positive_int(value: int, field_name: str) -> int:
+        """Validate positive integer configuration values."""
+        if value < 1:
+            raise ValueError(f"{field_name} must be greater than 0")
+        return value
+
+    def _prune_events_with_connection(self, conn, retention_days: int) -> int:
+        """Delete audit events older than retention window.
+
+        Args:
+            conn: Active database connection.
+            retention_days: Maximum age (days) to retain.
+
+        Returns:
+            Count of deleted rows.
+        """
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM hermes.memory_events
+                WHERE created_at < NOW() - make_interval(days => %s)
+                """,
+                (retention_days,),
+            )
+            deleted = int(cur.rowcount)
+
+        if hasattr(conn, "commit"):
+            conn.commit()
+
+        return deleted
+
+    def _maybe_prune_events(self, conn) -> None:
+        """Run time-based memory-event pruning on a throttled schedule."""
+        now = time.monotonic()
+        if now < self._next_event_prune_monotonic:
+            return
+
+        self._next_event_prune_monotonic = now + self.event_prune_interval_seconds
+        try:
+            deleted = self._prune_events_with_connection(
+                conn=conn,
+                retention_days=self.memory_events_retention_days,
+            )
+            if deleted > 0:
+                logger.info(
+                    "Pruned %s memory_events rows older than %s days",
+                    deleted,
+                    self.memory_events_retention_days,
+                )
+        except Exception as e:  # pragma: no cover - audit retention is best effort
+            logger.warning("Skipping memory event pruning due to error: %s", e)
+            if hasattr(conn, "rollback"):
+                conn.rollback()
+
+    def prune_events(self, retention_days: Optional[int] = None) -> int:
+        """Prune old memory audit events using a time-based retention window.
+
+        Args:
+            retention_days: Retention window in days. Defaults to configured value.
+
+        Returns:
+            Number of pruned rows. Returns 0 on database failure.
+        """
+        days = self._resolve_positive_int(
+            value=(
+                self.memory_events_retention_days
+                if retention_days is None
+                else retention_days
+            ),
+            field_name="retention_days",
+        )
+
+        conn = None
+        try:
+            conn = self._get_connection()
+            return self._prune_events_with_connection(conn=conn, retention_days=days)
+        except psycopg2.Error as e:
+            logger.error("Database error pruning memory events: %s", e)
+            if conn and hasattr(conn, "rollback"):
+                conn.rollback()
+            return 0
+        except Exception as e:
+            logger.error("Unexpected error pruning memory events: %s", e)
+            if conn and hasattr(conn, "rollback"):
+                conn.rollback()
+            return 0
+        finally:
+            if conn:
+                self._return_connection(conn)
+
     def _record_event(
         self,
         operation: str,
@@ -190,6 +310,7 @@ class MemoryStore:
                 )
                 if hasattr(conn, "commit"):
                     conn.commit()
+            self._maybe_prune_events(conn)
         except Exception as e:  # pragma: no cover - audit should never break core flow
             logger.warning(
                 "Skipping memory event recording due to error (operation=%s): %s",

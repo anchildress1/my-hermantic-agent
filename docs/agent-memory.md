@@ -22,6 +22,7 @@ This document describes the memory system as implemented in code.
 
 - Audit trail for memory operations.
 - Core fields: `memory_id`, `operation`, `status`, `details`, `created_at`.
+- Time-based retention is enforced by pruning events older than `MEMORY_EVENTS_RETENTION_DAYS` (default `90`).
 - Operations currently include:
   - `remember`
   - `recall`
@@ -74,7 +75,7 @@ When semantic memory is enabled:
 
 - Embedding dimension mismatch is still possible if model/env changes away from 1536 without schema migration.
 - Memory deletion path is soft delete (`deleted_at`), preserving historical auditability.
-- `memory_events` is append-only but intentionally simple (no actor/session partitioning yet).
+- `memory_events` audit records are retained by age only (no actor/session partitioning yet).
 
 ## Setup
 

@@ -95,6 +95,85 @@ def test_list_events_invalid_limit_raises(monkeypatch):
         store.list_events(limit=0)
 
 
+def test_prune_events_success(monkeypatch):
+    store = make_store(monkeypatch)
+
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.rowcount = 7
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    store._get_connection = lambda: mock_conn
+    store._return_connection = lambda _: None
+
+    deleted = store.prune_events(retention_days=14)
+    assert deleted == 7
+    assert "DELETE FROM hermes.memory_events" in mock_cursor.execute.call_args[0][0]
+    assert mock_cursor.execute.call_args[0][1] == (14,)
+
+
+def test_prune_events_invalid_days_raises(monkeypatch):
+    store = make_store(monkeypatch)
+
+    with pytest.raises(ValueError):
+        store.prune_events(retention_days=0)
+
+
+def test_record_event_triggers_prune_when_due(monkeypatch):
+    store = make_store(monkeypatch)
+
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    store._get_connection = lambda: mock_conn
+    store._return_connection = lambda _: None
+    store._next_event_prune_monotonic = 0.0
+    store._prune_events_with_connection = MagicMock(return_value=3)
+
+    store.record_event(
+        operation="remember",
+        status=MemoryStore.EVENT_SUCCESS,
+        details={"memory_preview": "x"},
+        memory_id=11,
+    )
+
+    store._prune_events_with_connection.assert_called_once_with(
+        conn=mock_conn,
+        retention_days=store.memory_events_retention_days,
+    )
+
+
+def test_record_event_skips_prune_before_interval(monkeypatch):
+    store = make_store(monkeypatch)
+
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    store._get_connection = lambda: mock_conn
+    store._return_connection = lambda _: None
+    store._next_event_prune_monotonic = float("inf")
+    store._prune_events_with_connection = MagicMock(return_value=3)
+
+    store.record_event(
+        operation="remember",
+        status=MemoryStore.EVENT_SUCCESS,
+        details={"memory_preview": "x"},
+    )
+
+    store._prune_events_with_connection.assert_not_called()
+
+
+def test_event_retention_env_overrides_defaults(monkeypatch):
+    monkeypatch.setenv("MEMORY_EVENTS_RETENTION_DAYS", "21")
+    monkeypatch.setenv("MEMORY_EVENTS_PRUNE_INTERVAL_SECONDS", "15")
+    store = make_store(monkeypatch)
+
+    assert store.memory_events_retention_days == 21
+    assert store.event_prune_interval_seconds == 15
+
+
 def test_revive_exact_memory_success(monkeypatch):
     store = make_store(monkeypatch)
 

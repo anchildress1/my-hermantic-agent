@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     )
     openai_embedding_model: str = "text-embedding-3-small"
     openai_embedding_dim: int = 1536
+    memory_events_retention_days: int = Field(
+        90, description="Days to keep rows in hermes.memory_events"
+    )
+    memory_events_prune_interval_seconds: int = Field(
+        3600, description="Seconds between background memory_events prune attempts"
+    )
     langmem_enabled: bool = True
     langmem_model: Optional[str] = None
     langmem_model_provider: str = "ollama"
