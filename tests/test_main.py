@@ -47,7 +47,9 @@ def test_main_invokes_signal_handler_setup(monkeypatch):
 
     monkeypatch.setattr(main_module, "_install_signal_handlers", fake_install)
     monkeypatch.setattr(main_module, "setup_logging", lambda: None)
-    monkeypatch.setattr(main_module, "get_settings", MagicMock(side_effect=Exception("bad env")))
+    monkeypatch.setattr(
+        main_module, "get_settings", MagicMock(side_effect=Exception("bad env"))
+    )
 
     rc = main_module.main()
 
