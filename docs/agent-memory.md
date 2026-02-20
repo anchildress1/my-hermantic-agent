@@ -81,6 +81,7 @@ When semantic memory is enabled:
   - temperature is configurable and defaults to `0.2`.
   - only inserts are allowed in extractor decisions.
 - Memory writes are model-mediated with policy gates (duplicate checks, explicit remember priority boost).
+- Relevance regressions are guarded by fixture-based tolerance tests in `tests/services/memory/fixtures/relevance_regression.json`.
 
 ## Current Limits
 

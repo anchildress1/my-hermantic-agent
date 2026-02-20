@@ -1,0 +1,212 @@
+{
+  "cases": [
+    {
+      "name": "explicit_preference_and_task_signals",
+      "max_memories_per_turn": 2,
+      "default_tag": "chat",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Remember that I prefer Python for backend work and I have standup every day at 9am."
+        }
+      ],
+      "raw_result": [
+        {
+          "memory_text": "User prefers Python for backend work",
+          "type": "preference",
+          "tag": "coding",
+          "importance": 2.0,
+          "confidence": 0.92
+        },
+        {
+          "memory_text": "User has daily standup at 9am",
+          "type": "task",
+          "tag": "work",
+          "importance": 1.4,
+          "confidence": 0.88
+        },
+        {
+          "memory_text": "User shared a funny meme",
+          "type": "fact",
+          "tag": "chat",
+          "importance": 0.2,
+          "confidence": 0.4
+        }
+      ],
+      "expectations": {
+        "count_band": {
+          "min": 2,
+          "max": 2
+        },
+        "type_bands": {
+          "preference": {
+            "min": 1,
+            "max": 1
+          },
+          "task": {
+            "min": 1,
+            "max": 1
+          },
+          "fact": {
+            "min": 0,
+            "max": 0
+          }
+        },
+        "required_texts": [
+          "prefers Python for backend work",
+          "daily standup at 9am"
+        ],
+        "forbidden_texts": [
+          "funny meme"
+        ],
+        "confidence_band": {
+          "min": 0.85,
+          "max": 1.0
+        },
+        "importance_band": {
+          "min": 1.2,
+          "max": 2.2
+        }
+      }
+    },
+    {
+      "name": "dedupe_with_default_tag_normalization",
+      "max_memories_per_turn": 4,
+      "default_tag": "chat",
+      "messages": [
+        {
+          "role": "user",
+          "content": "I prefer keyboard shortcuts and I am learning Rust."
+        }
+      ],
+      "raw_result": [
+        {
+          "memory_text": "User prefers keyboard shortcuts",
+          "type": "preference",
+          "tag": "",
+          "importance": 1.3,
+          "confidence": 0.9
+        },
+        {
+          "memory_text": "user prefers keyboard shortcuts",
+          "type": "preference",
+          "tag": "chat",
+          "importance": 1.1,
+          "confidence": 0.8
+        },
+        {
+          "memory_text": "User is learning Rust",
+          "type": "insight",
+          "tag": "learning",
+          "importance": 1.0,
+          "confidence": 0.75
+        }
+      ],
+      "expectations": {
+        "count_band": {
+          "min": 2,
+          "max": 2
+        },
+        "type_bands": {
+          "preference": {
+            "min": 1,
+            "max": 1
+          },
+          "insight": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "required_texts": [
+          "keyboard shortcuts",
+          "learning Rust"
+        ],
+        "required_tags": [
+          "chat",
+          "learning"
+        ],
+        "confidence_band": {
+          "min": 0.75,
+          "max": 1.0
+        },
+        "importance_band": {
+          "min": 1.0,
+          "max": 1.4
+        }
+      }
+    },
+    {
+      "name": "mixed_payload_shapes_with_noise",
+      "max_memories_per_turn": 4,
+      "default_tag": "chat",
+      "messages": [
+        {
+          "role": "user",
+          "content": "I track tasks in Todoist, prefer concise responses, and like weekend hiking."
+        }
+      ],
+      "raw_result": [
+        {
+          "memory_text": "User tracks tasks in Todoist",
+          "type": "task",
+          "tag": "productivity",
+          "importance": 1.6,
+          "confidence": 0.82
+        },
+        {
+          "content": "User prefers concise responses",
+          "type": "preference",
+          "tag": "chat",
+          "importance": 1.7,
+          "confidence": 0.9
+        },
+        {
+          "text": "User likes weekend hiking",
+          "type": "fact",
+          "tag": "personal",
+          "importance": 0.8,
+          "confidence": 0.65
+        },
+        {
+          "foo": "bar"
+        }
+      ],
+      "expectations": {
+        "count_band": {
+          "min": 3,
+          "max": 3
+        },
+        "type_bands": {
+          "task": {
+            "min": 1,
+            "max": 1
+          },
+          "preference": {
+            "min": 1,
+            "max": 1
+          },
+          "fact": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "required_texts": [
+          "tracks tasks in Todoist",
+          "prefers concise responses",
+          "weekend hiking"
+        ],
+        "forbidden_texts": [
+          "bar"
+        ],
+        "confidence_band": {
+          "min": 0.65,
+          "max": 0.95
+        },
+        "importance_band": {
+          "min": 0.75,
+          "max": 1.8
+        }
+      }
+    }
+  ]
+}
