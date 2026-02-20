@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.services.memory.vector_store import MemoryStore
 
 
@@ -86,6 +88,13 @@ def test_record_event_does_not_raise_on_missing_table(monkeypatch):
     )
 
 
+def test_list_events_invalid_limit_raises(monkeypatch):
+    store = make_store(monkeypatch)
+
+    with pytest.raises(ValueError):
+        store.list_events(limit=0)
+
+
 def test_revive_exact_memory_success(monkeypatch):
     store = make_store(monkeypatch)
 
@@ -156,3 +165,15 @@ def test_revive_exact_memory_no_match_clears_previous_last_error(monkeypatch):
     row = store.revive_exact_memory("User prefers Python", "preference", "coding")
     assert row is None
     assert store.get_last_error() is None
+
+
+def test_revive_exact_memory_invalid_boost_raises(monkeypatch):
+    store = make_store(monkeypatch)
+
+    with pytest.raises(ValueError):
+        store.revive_exact_memory(
+            "User prefers Python",
+            "preference",
+            "coding",
+            importance_boost=0.0,
+        )
