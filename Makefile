@@ -1,4 +1,7 @@
-.PHONY: help install setup setup-db setup-hooks run test coverage logs clean format lint ai-checks
+.PHONY: help install setup setup-db setup-hooks run \
+	format format-py format-md lint lint-py lint-md \
+	test test-main test-core test-interfaces test-services test-tools test-flows \
+	coverage logs clean ai-checks
 
 help:
 	@echo "Ollama Agent - Available Commands:"
@@ -8,10 +11,20 @@ help:
 	@echo "  make setup-db        - Initialize TimescaleDB schema"
 	@echo "  make setup-hooks     - Install git hooks with lefthook"
 	@echo "  make run             - Start the chat interface"
+	@echo "  make format-py       - Format Python code with ruff"
+	@echo "  make format-md       - Format Markdown files"
 	@echo "  make format          - Format code with ruff"
+	@echo "  make lint-py         - Lint Python code with ruff"
+	@echo "  make lint-md         - Check Markdown formatting"
 	@echo "  make lint            - Lint code with ruff"
-	@echo "  make test            - Run tests with coverage"
-	@echo "  make ai-checks       - Run strict checks (lint + test + coverage min)"
+	@echo "  make test-main       - Run root-level tests"
+	@echo "  make test-core       - Run core tests"
+	@echo "  make test-interfaces - Run interface/CLI tests"
+	@echo "  make test-services   - Run service tests"
+	@echo "  make test-tools      - Run tool tests"
+	@echo "  make test-flows      - Run all test flows by area"
+	@echo "  make test            - Run full test suite with coverage"
+	@echo "  make ai-checks       - Run format + lint + all test flows + coverage gate"
 	@echo "  make logs            - Tail application logs"
 	@echo "  make clean           - Clean generated files and logs"
 
@@ -38,18 +51,43 @@ setup-hooks:
 run:
 	uv run python main.py
 
-format:
+format: format-py format-md
+
+format-py:
 	uv run ruff format .
+
+format-md:
 	uv run mdformat *.md docs/ src/ tests/
 
-lint:
+lint: lint-py lint-md
+
+lint-py:
 	uv run ruff check .
+
+lint-md:
 	uv run mdformat --check *.md docs/ src/ tests/
+
+test-main:
+	uv run pytest tests/test_main.py
+
+test-core:
+	uv run pytest tests/core
+
+test-interfaces:
+	uv run pytest tests/interfaces
+
+test-services:
+	uv run pytest tests/services
+
+test-tools:
+	uv run pytest tests/tools
+
+test-flows: test-main test-core test-interfaces test-services test-tools
 
 test:
 	COVERAGE_FILE=coverage/.coverage uv run pytest --cov-config=.coveragerc --cov=src --cov-report=html:coverage/html --cov-report=term --cov-fail-under=80
 
-ai-checks: format lint test
+ai-checks: format lint test-flows test
 
 logs:
 	tail -f logs/ollama_chat.log

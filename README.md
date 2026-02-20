@@ -219,8 +219,14 @@ ______________________________________________________________________
 ## Development
 
 ```bash
-# Run tests
+# Run all test flows by area
+make test-flows
+
+# Run full suite with coverage gate
 make test
+
+# Run formatter + linter + all test flows + coverage
+make ai-checks
 
 # View logs
 make logs

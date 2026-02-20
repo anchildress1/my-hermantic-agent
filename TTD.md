@@ -13,4 +13,4 @@
 - [x] Add event retention policy for `memory_events` (time-based pruning)
 - [ ] Add migration for future embedding-dimension change workflow
 - [ ] Add relevance-regression fixtures with tolerance bands for extraction behavior
-- [ ] Add tombstone lifecycle policy (merge/update/delete reconciliation with full audit)
+- [x] Add tombstone lifecycle policy (merge/update/delete reconciliation with full audit)

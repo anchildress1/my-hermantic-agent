@@ -62,6 +62,17 @@ When semantic memory is enabled:
 - Surfaces failed write attempts in chat output with the attempted memory text and exact DB error.
 - Explicit user remember intent (messages containing "remember") is boosted to high importance automatically.
 
+## Tombstone Lifecycle Policy
+
+- Exact duplicate remembers reconcile before insert:
+  - merge into active match (`action=merged_active`)
+  - revive soft-deleted match (`action=revived_tombstone`)
+  - insert only when no exact match exists (`action=insert_new`)
+- Forget operations are fully auditable with lifecycle actions:
+  - `action=tombstone_created`
+  - `action=already_tombstoned`
+  - `action=not_found`
+
 ## Relevance Notes
 
 - LangMem extraction is configured for relevance-first behavior:

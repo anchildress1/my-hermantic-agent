@@ -198,6 +198,18 @@ class MemoryStore:
             raise ValueError(f"{field_name} must be greater than 0")
         return value
 
+    @staticmethod
+    def _as_dict_row(row: Optional[Dict]) -> Optional[Dict]:
+        """Normalize cursor row payloads into plain dictionaries."""
+        if row is None:
+            return None
+        if isinstance(row, dict):
+            return dict(row)
+        try:
+            return dict(row)
+        except Exception:
+            return None
+
     def _prune_events_with_connection(self, conn, retention_days: int) -> int:
         """Delete audit events older than retention window.
 
@@ -452,6 +464,197 @@ class MemoryStore:
             if conn:
                 self._return_connection(conn)
 
+    def merge_exact_memory(
+        self,
+        memory_text: str,
+        type: str,
+        context: str,
+        importance: float,
+        confidence: float,
+        source: Optional[str],
+    ) -> Optional[Dict]:
+        """Merge a new observation into an active exact-match memory row.
+
+        Args:
+            memory_text: Exact memory text to match.
+            type: Memory type.
+            context: Memory tag/context.
+            importance: Incoming importance score.
+            confidence: Incoming confidence score.
+            source: Optional latest source snippet.
+
+        Returns:
+            Updated row payload when a match exists, otherwise None.
+        """
+        conn = None
+        details = {
+            "memory_preview": self._preview(memory_text),
+            "type": type,
+            "context": context,
+            "importance": importance,
+            "confidence": confidence,
+            "source_preview": self._preview(source),
+        }
+        try:
+            conn = self._get_connection()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    UPDATE hermes.memories
+                    SET last_accessed = NOW(),
+                        access_count = access_count + 1,
+                        importance = LEAST(3.0, GREATEST(importance, %s)),
+                        confidence = GREATEST(confidence, %s),
+                        source = COALESCE(%s, source)
+                    WHERE id = (
+                        SELECT id
+                        FROM hermes.memories
+                        WHERE memory_text = %s
+                          AND type = %s
+                          AND tag = %s
+                          AND deleted_at IS NULL
+                        ORDER BY id DESC
+                        LIMIT 1
+                    )
+                    RETURNING id, importance, confidence, access_count, last_accessed
+                    """,
+                    (
+                        importance,
+                        confidence,
+                        source,
+                        memory_text,
+                        type,
+                        context,
+                    ),
+                )
+                row = self._as_dict_row(cur.fetchone())
+                conn.commit()
+                self._clear_last_error()
+                return row
+        except psycopg2.Error as e:
+            logger.error(f"Database error merging exact memory: {e}")
+            if conn:
+                conn.rollback()
+            self._set_last_error(
+                operation="merge_exact_memory",
+                error=e,
+                details=details,
+            )
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error merging exact memory: {e}")
+            if conn:
+                conn.rollback()
+            self._set_last_error(
+                operation="merge_exact_memory",
+                error=e,
+                details=details,
+            )
+            return None
+        finally:
+            if conn:
+                self._return_connection(conn)
+
+    def revive_tombstoned_memory(
+        self,
+        memory_text: str,
+        type: str,
+        context: str,
+        importance: float,
+        confidence: float,
+        source: Optional[str],
+    ) -> Optional[Dict]:
+        """Revive a soft-deleted exact match and reconcile latest values.
+
+        Args:
+            memory_text: Exact memory text to match.
+            type: Memory type.
+            context: Memory tag/context.
+            importance: Incoming importance score.
+            confidence: Incoming confidence score.
+            source: Optional latest source snippet.
+
+        Returns:
+            Updated row payload when a tombstone is revived, otherwise None.
+        """
+        conn = None
+        details = {
+            "memory_preview": self._preview(memory_text),
+            "type": type,
+            "context": context,
+            "importance": importance,
+            "confidence": confidence,
+            "source_preview": self._preview(source),
+        }
+        try:
+            conn = self._get_connection()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    WITH candidate AS (
+                        SELECT id, deleted_at
+                        FROM hermes.memories
+                        WHERE memory_text = %s
+                          AND type = %s
+                          AND tag = %s
+                          AND deleted_at IS NOT NULL
+                        ORDER BY deleted_at DESC, id DESC
+                        LIMIT 1
+                    )
+                    UPDATE hermes.memories AS m
+                    SET deleted_at = NULL,
+                        last_accessed = NOW(),
+                        access_count = access_count + 1,
+                        importance = LEAST(3.0, GREATEST(m.importance, %s)),
+                        confidence = GREATEST(m.confidence, %s),
+                        source = COALESCE(%s, m.source)
+                    FROM candidate
+                    WHERE m.id = candidate.id
+                    RETURNING
+                        m.id,
+                        m.importance,
+                        m.confidence,
+                        m.access_count,
+                        m.last_accessed,
+                        candidate.deleted_at AS prior_deleted_at
+                    """,
+                    (
+                        memory_text,
+                        type,
+                        context,
+                        importance,
+                        confidence,
+                        source,
+                    ),
+                )
+                row = self._as_dict_row(cur.fetchone())
+                conn.commit()
+                self._clear_last_error()
+                return row
+        except psycopg2.Error as e:
+            logger.error(f"Database error reviving tombstoned memory: {e}")
+            if conn:
+                conn.rollback()
+            self._set_last_error(
+                operation="revive_tombstoned_memory",
+                error=e,
+                details=details,
+            )
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error reviving tombstoned memory: {e}")
+            if conn:
+                conn.rollback()
+            self._set_last_error(
+                operation="revive_tombstoned_memory",
+                error=e,
+                details=details,
+            )
+            return None
+        finally:
+            if conn:
+                self._return_connection(conn)
+
     def list_events(
         self,
         limit: int = 50,
@@ -599,6 +802,61 @@ class MemoryStore:
 
         conn = None
         try:
+            merged = self.merge_exact_memory(
+                memory_text=memory_text,
+                type=type,
+                context=context,
+                importance=importance,
+                confidence=confidence,
+                source=source,
+            )
+            if merged and "id" in merged:
+                memory_id = int(merged["id"])
+                self._record_event(
+                    operation="remember",
+                    status=self.EVENT_SUCCESS,
+                    memory_id=memory_id,
+                    details={
+                        **event_base,
+                        "memory_id": memory_id,
+                        "action": "merged_active",
+                        "reconciliation": "merge",
+                        "new_importance": merged.get("importance"),
+                        "new_confidence": merged.get("confidence"),
+                        "access_count": merged.get("access_count"),
+                    },
+                )
+                self._clear_last_error()
+                return memory_id
+
+            revived = self.revive_tombstoned_memory(
+                memory_text=memory_text,
+                type=type,
+                context=context,
+                importance=importance,
+                confidence=confidence,
+                source=source,
+            )
+            if revived and "id" in revived:
+                memory_id = int(revived["id"])
+                self._record_event(
+                    operation="remember",
+                    status=self.EVENT_SUCCESS,
+                    memory_id=memory_id,
+                    details={
+                        **event_base,
+                        "memory_id": memory_id,
+                        "action": "revived_tombstone",
+                        "reconciliation": "update",
+                        "prior_deleted_at": revived.get("prior_deleted_at"),
+                        "new_importance": revived.get("importance"),
+                        "new_confidence": revived.get("confidence"),
+                        "access_count": revived.get("access_count"),
+                    },
+                )
+                self._clear_last_error()
+                return memory_id
+
             embedding = self._get_embedding(memory_text)
             logger.debug(
                 f"Generated embedding for storage: text_length={len(memory_text)}, embedding_dims={len(embedding)}, type={type}, tag={tag}"
@@ -643,6 +901,8 @@ class MemoryStore:
                     details={
                         **event_base,
                         "memory_id": memory_id,
+                        "action": "insert_new",
+                        "reconciliation": "insert",
                         "embedding_model": self.embedding_model,
                         "embedding_dim": self.embedding_dim,
                     },
@@ -878,30 +1138,86 @@ class MemoryStore:
         conn = None
         try:
             conn = self._get_connection()
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     """
                     UPDATE hermes.memories
                     SET deleted_at = NOW()
                     WHERE id = %s AND deleted_at IS NULL
+                    RETURNING id, memory_text, type, tag, deleted_at
                     """,
                     (memory_id,),
                 )
+                tombstoned_row = self._as_dict_row(cur.fetchone())
                 conn.commit()
-                deleted = cur.rowcount > 0
+                deleted = tombstoned_row is not None
+
+                existing_row: Optional[Dict] = None
+                if not deleted:
+                    cur.execute(
+                        """
+                        SELECT id, memory_text, type, tag, deleted_at
+                        FROM hermes.memories
+                        WHERE id = %s
+                        """,
+                        (memory_id,),
+                    )
+                    existing_row = self._as_dict_row(cur.fetchone())
+
                 if deleted:
                     logger.info(f"Soft-deleted memory {memory_id}")
+                    event_details = {
+                        "memory_id": memory_id,
+                        "deleted": True,
+                        "mode": "soft_delete",
+                        "action": "tombstone_created",
+                        "reconciliation": "delete",
+                        "memory_preview": self._preview(
+                            tombstoned_row.get("memory_text")
+                            if tombstoned_row
+                            else None
+                        ),
+                        "type": tombstoned_row.get("type") if tombstoned_row else None,
+                        "context": tombstoned_row.get("tag")
+                        if tombstoned_row
+                        else None,
+                        "deleted_at": tombstoned_row.get("deleted_at")
+                        if tombstoned_row
+                        else None,
+                    }
+                    event_memory_id = memory_id
                 else:
-                    logger.warning(f"Memory {memory_id} not found")
+                    if existing_row and existing_row.get("deleted_at"):
+                        logger.info(f"Memory {memory_id} is already tombstoned")
+                        event_details = {
+                            "memory_id": memory_id,
+                            "deleted": False,
+                            "mode": "soft_delete",
+                            "action": "already_tombstoned",
+                            "reconciliation": "delete",
+                            "memory_preview": self._preview(
+                                existing_row.get("memory_text")
+                            ),
+                            "type": existing_row.get("type"),
+                            "context": existing_row.get("tag"),
+                            "deleted_at": existing_row.get("deleted_at"),
+                        }
+                        event_memory_id = memory_id
+                    else:
+                        logger.warning(f"Memory {memory_id} not found")
+                        event_details = {
+                            "memory_id": memory_id,
+                            "deleted": False,
+                            "mode": "soft_delete",
+                            "action": "not_found",
+                            "reconciliation": "delete",
+                        }
+                        event_memory_id = None
                 self._record_event(
                     operation="forget",
                     status=self.EVENT_SUCCESS,
-                    memory_id=memory_id if deleted else None,
-                    details={
-                        "memory_id": memory_id,
-                        "deleted": deleted,
-                        "mode": "soft_delete",
-                    },
+                    memory_id=event_memory_id,
+                    details=event_details,
                 )
                 return deleted
         except psycopg2.Error as e:

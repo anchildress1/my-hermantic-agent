@@ -174,6 +174,151 @@ def test_event_retention_env_overrides_defaults(monkeypatch):
     assert store.event_prune_interval_seconds == 15
 
 
+def test_merge_exact_memory_success(monkeypatch):
+    store = make_store(monkeypatch)
+
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchone.return_value = {
+        "id": 4,
+        "importance": 2.1,
+        "confidence": 0.95,
+        "access_count": 8,
+        "last_accessed": "2026-02-20T00:00:00Z",
+    }
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    store._get_connection = lambda: mock_conn
+    store._return_connection = lambda _: None
+
+    row = store.merge_exact_memory(
+        memory_text="User prefers Python",
+        type="preference",
+        context="coding",
+        importance=2.0,
+        confidence=0.9,
+        source="user: prefers Python",
+    )
+    assert row["id"] == 4
+    assert row["importance"] == 2.1
+    assert row["confidence"] == 0.95
+
+
+def test_revive_tombstoned_memory_success(monkeypatch):
+    store = make_store(monkeypatch)
+
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchone.return_value = {
+        "id": 12,
+        "importance": 1.7,
+        "confidence": 0.82,
+        "access_count": 3,
+        "last_accessed": "2026-02-20T00:00:00Z",
+        "prior_deleted_at": "2026-02-19T00:00:00Z",
+    }
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    store._get_connection = lambda: mock_conn
+    store._return_connection = lambda _: None
+
+    row = store.revive_tombstoned_memory(
+        memory_text="User prefers Python",
+        type="preference",
+        context="coding",
+        importance=1.6,
+        confidence=0.8,
+        source="user: remember this",
+    )
+    assert row["id"] == 12
+    assert row["prior_deleted_at"] == "2026-02-19T00:00:00Z"
+
+
+def test_remember_merges_active_match_before_insert(monkeypatch):
+    store = make_store(monkeypatch)
+    store.merge_exact_memory = MagicMock(
+        return_value={
+            "id": 41,
+            "importance": 2.0,
+            "confidence": 0.9,
+            "access_count": 7,
+        }
+    )
+    store.revive_tombstoned_memory = MagicMock(return_value=None)
+    store._record_event = MagicMock()
+    store._get_embedding = MagicMock(
+        side_effect=AssertionError("embedding should not run for merge path")
+    )
+
+    memory_id = store.remember.__wrapped__(
+        store,
+        memory_text="User prefers Python",
+        type="preference",
+        context="coding",
+        source="user: remember this",
+    )
+    assert memory_id == 41
+    assert store._record_event.call_args.kwargs["details"]["action"] == "merged_active"
+
+
+def test_remember_revives_tombstone_before_insert(monkeypatch):
+    store = make_store(monkeypatch)
+    store.merge_exact_memory = MagicMock(return_value=None)
+    store.revive_tombstoned_memory = MagicMock(
+        return_value={
+            "id": 52,
+            "importance": 1.5,
+            "confidence": 0.85,
+            "access_count": 4,
+            "prior_deleted_at": "2026-02-19T12:00:00Z",
+        }
+    )
+    store._record_event = MagicMock()
+    store._get_embedding = MagicMock(
+        side_effect=AssertionError("embedding should not run for tombstone revive path")
+    )
+
+    memory_id = store.remember.__wrapped__(
+        store,
+        memory_text="User has standup at 9am",
+        type="task",
+        context="work",
+        source="user: remember standup",
+    )
+    assert memory_id == 52
+    details = store._record_event.call_args.kwargs["details"]
+    assert details["action"] == "revived_tombstone"
+    assert details["reconciliation"] == "update"
+
+
+def test_forget_already_tombstoned_records_lifecycle_event(monkeypatch):
+    store = make_store(monkeypatch)
+
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchone.side_effect = [
+        None,
+        {
+            "id": 33,
+            "memory_text": "User prefers Python",
+            "type": "preference",
+            "tag": "coding",
+            "deleted_at": "2026-02-19T00:00:00Z",
+        },
+    ]
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    store._get_connection = lambda: mock_conn
+    store._return_connection = lambda _: None
+    store._record_event = MagicMock()
+
+    deleted = store.forget(33)
+    assert deleted is False
+    kwargs = store._record_event.call_args.kwargs
+    assert kwargs["memory_id"] == 33
+    assert kwargs["details"]["action"] == "already_tombstoned"
+
+
 def test_revive_exact_memory_success(monkeypatch):
     store = make_store(monkeypatch)
 
