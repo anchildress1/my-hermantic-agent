@@ -48,6 +48,10 @@ def test_remember_db_error_returns_none(monkeypatch):
 
     res = store.remember("ok", "fact", "ctx")
     assert res is None
+    last_error = store.get_last_error()
+    assert last_error is not None
+    assert last_error["operation"] == "remember"
+    assert last_error["details"]["memory_preview"] == "ok"
 
 
 def test_recall_db_error_returns_empty(monkeypatch):

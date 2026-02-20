@@ -137,3 +137,22 @@ def test_revive_exact_memory_db_error_sets_last_error(monkeypatch):
     row = store.revive_exact_memory("User prefers Python", "preference", "coding")
     assert row is None
     assert store.get_last_error()["operation"] == "revive_exact_memory"
+
+
+def test_revive_exact_memory_no_match_clears_previous_last_error(monkeypatch):
+    store = make_store(monkeypatch)
+
+    # Simulate stale previous error state
+    store._set_last_error("remember", "old error", {"memory_preview": "x"})
+
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchone.return_value = None
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    store._get_connection = lambda: mock_conn
+    store._return_connection = lambda _: None
+
+    row = store.revive_exact_memory("User prefers Python", "preference", "coding")
+    assert row is None
+    assert store.get_last_error() is None

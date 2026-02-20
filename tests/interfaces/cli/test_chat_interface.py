@@ -3,6 +3,8 @@ from src.services.llm.ollama_service import OllamaService
 from src.core.config import AgentConfig
 from unittest.mock import MagicMock, patch
 
+from src.services.memory.auto_writer import AutoMemoryFailure, AutoMemoryResult
+
 
 def test_cmd_help_with_memory_store(capsys):
     """Test help command includes memory guidance when store is available."""
@@ -179,3 +181,57 @@ def test_cmd_audit_no_events(capsys):
     session.cmd_audit()
     out = capsys.readouterr().out
     assert "No memory events found" in out
+
+
+def test_send_message_surfaces_full_auto_memory_failure_and_saves(capsys):
+    """Test full failed memory text is shown and turn is persisted."""
+    auto_writer = MagicMock()
+    auto_writer.last_result = AutoMemoryResult(
+        failures=[
+            AutoMemoryFailure(
+                memory_text="remember exact string that failed to write",
+                type="fact",
+                tag="chat",
+                error="deadlock detected",
+            )
+        ]
+    )
+
+    session = ChatSession(
+        config=AgentConfig(model="test", system="sys", parameters={}),
+        context_file="default.json",
+        llm_service=MagicMock(spec=OllamaService),
+        auto_memory_writer=auto_writer,
+    )
+
+    session._handle_response = MagicMock(return_value=("assistant ok", False))
+
+    with patch("src.agent.chat_session.save_chat_history") as mock_save:
+        session._send_message("hello")
+
+    out = capsys.readouterr().out
+    assert "remember exact string that failed to write" in out
+    assert "deadlock detected" in out
+    mock_save.assert_called_once()
+
+
+def test_run_keyboard_interrupt_closes_memory_store(capsys):
+    """Test run handles KeyboardInterrupt and closes memory store in finally."""
+    mock_store = MagicMock()
+    mock_llm = MagicMock(spec=OllamaService)
+    mock_llm.check_connection.return_value = True
+
+    session = ChatSession(
+        config=AgentConfig(model="test", system="sys", parameters={}),
+        context_file="default.json",
+        llm_service=mock_llm,
+        memory_store=mock_store,
+    )
+
+    with patch("builtins.input", side_effect=KeyboardInterrupt):
+        with patch("src.agent.chat_session.save_chat_history"):
+            session.run()
+
+    out = capsys.readouterr().out
+    assert "Saving before exit" in out
+    mock_store.close.assert_called_once()
