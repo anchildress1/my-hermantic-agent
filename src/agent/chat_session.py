@@ -1,12 +1,13 @@
 """Chat session management with command handling."""
 
 import logging
+import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from src.core.config import AgentConfig
 from src.core.utils import count_message_tokens, estimate_tokens, trim_context
-from src.services.llm.ollama_service import OllamaService
+from src.services.llm.base import LLMService
 from src.services.memory.auto_writer import AutoMemoryWriter
 from src.services.memory.vector_store import MemoryStore
 from src.services.memory.file_storage import (
@@ -23,17 +24,21 @@ logger = logging.getLogger(__name__)
 class ChatSession:
     """Manages chat session state and command execution."""
 
+    ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+    CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
     ANSI_RESET = "\u001b[0m"
     ANSI_BOLD = "\u001b[1m"
     ANSI_CYAN = "\u001b[36m"
     ANSI_YELLOW = "\u001b[33m"
     ANSI_GREEN = "\u001b[32m"
+    EXIT_INPUTS = {"/bye", "/quit", "bye", "quit", "exit"}
+    MEMORY_STORE_UNAVAILABLE_MSG = "❌ Memory store not available"
 
     def __init__(
         self,
         config: AgentConfig,
         context_file: str,
-        llm_service: OllamaService,
+        llm_service: LLMService,
         memory_store: Optional[MemoryStore] = None,
         auto_memory_writer: Optional[AutoMemoryWriter] = None,
     ):
@@ -50,7 +55,7 @@ class ChatSession:
         self.context_file = context_file
         self.memory_store = memory_store
         self.auto_memory_writer = auto_memory_writer
-        self.ollama_service = llm_service
+        self.llm_service = llm_service
 
         self.model = config.model
         self.system_prompt = config.system
@@ -175,6 +180,36 @@ class ChatSession:
                 f"{self.ANSI_YELLOW}⚠️  No saved context loaded from: {' '.join(files)}{self.ANSI_RESET}"
             )
 
+    @classmethod
+    def _sanitize_cli_text(cls, value: object, max_len: int = 200) -> str:
+        """Normalize output for terminal-safe display."""
+        text = str(value)
+        text = text.replace("\r", " ").replace("\n", " ")
+        text = cls.ANSI_ESCAPE_PATTERN.sub("", text)
+        text = cls.CONTROL_CHAR_PATTERN.sub("", text)
+        text = " ".join(text.split())
+        if len(text) > max_len:
+            return f"{text[:max_len]}..."
+        return text
+
+    @classmethod
+    def _sanitize_details_payload(cls, payload: Any) -> Any:
+        """Recursively sanitize structured payloads for safe terminal output."""
+        if isinstance(payload, dict):
+            return {
+                cls._sanitize_cli_text(key, max_len=80): cls._sanitize_details_payload(
+                    value
+                )
+                for key, value in payload.items()
+            }
+        if isinstance(payload, list):
+            return [cls._sanitize_details_payload(item) for item in payload]
+        if isinstance(payload, tuple):
+            return tuple(cls._sanitize_details_payload(item) for item in payload)
+        if isinstance(payload, str):
+            return cls._sanitize_cli_text(payload, max_len=200)
+        return payload
+
     def cmd_trim(self) -> None:
         """Trim conversation to fit within token limits."""
         self.messages, was_trimmed = trim_context(
@@ -219,7 +254,7 @@ class ChatSession:
             operation: Optional operation filter (remember, recall, forget, auto_remember)
         """
         if not self.memory_store:
-            print("❌ Memory store not available")
+            print(self.MEMORY_STORE_UNAVAILABLE_MSG)
             return
 
         try:
@@ -237,11 +272,98 @@ class ChatSession:
                     f"{event.get('operation')} | {event.get('status')} | memory_id={memory_id}"
                 )
                 if details:
-                    summary = str(details)
-                    print(f"      details: {summary[:200]}")
+                    safe_details = self._sanitize_details_payload(details)
+                    summary = self._sanitize_cli_text(safe_details, max_len=200)
+                    print(f"      details: {summary}")
         except Exception as e:
             logger.error(f"Error getting audit events: {e}", exc_info=True)
             print(f"❌ Error: {e}")
+
+    def _append_xml_tool_response(self, payload: str) -> None:
+        """Append tool response payload for XML-tool continuation flow."""
+        self.messages.append(
+            {"role": "user", "content": f"<tool_response>{payload}</tool_response>"}
+        )
+
+    def _execute_xml_tool(
+        self,
+        tool_map: Dict[str, Callable[..., str]],
+        tool_name: str,
+        arguments: Dict[str, Any],
+    ) -> bool:
+        """Execute a single XML tool call and append its response.
+
+        Returns:
+            True when store_memory_tool ran successfully.
+        """
+        tool_func = tool_map.get(tool_name)
+        if tool_func is None:
+            logger.warning(f"XML Tool {tool_name} not found in available tools")
+            return False
+
+        try:
+            result = tool_func(**arguments)
+            logger.info(f"XML Tool {tool_name} executed: {result}")
+            self._append_xml_tool_response(str(result))
+            print(f"🧠 Tool Output: {result}")
+            return tool_name == "store_memory_tool"
+        except Exception as e:
+            logger.error(f"Error executing XML tool {tool_name}: {e}")
+            self._append_xml_tool_response(f"Error: {e}")
+            return False
+
+    def _run_command(self, user_input: str) -> bool:
+        """Run slash commands. Returns True when a command was handled."""
+        if user_input == "/?":
+            self.cmd_help()
+            return True
+
+        if user_input == "/context":
+            self.cmd_context(show_full=True)
+            return True
+
+        if user_input == "/context brief":
+            self.cmd_context(show_full=False)
+            return True
+
+        if user_input == "/clear":
+            self.cmd_clear()
+            return True
+
+        if user_input == "/save":
+            self.cmd_save()
+            return True
+
+        if user_input.startswith("/load"):
+            tokens = user_input.split()[1:]
+            self.cmd_load(files=tokens if tokens else None)
+            return True
+
+        if user_input == "/trim":
+            self.cmd_trim()
+            return True
+
+        if self.memory_store and user_input.startswith("/audit"):
+            parts = user_input.split(maxsplit=1)
+            operation = parts[1].strip() if len(parts) > 1 else None
+            self.cmd_audit(operation=operation)
+            return True
+
+        return False
+
+    def _handle_user_input(self, user_input: str) -> bool:
+        """Handle one user input line. Returns True when session should exit."""
+        if user_input.lower() in self.EXIT_INPUTS:
+            return self.cmd_quit()
+
+        if self._run_command(user_input):
+            return False
+
+        if not user_input:
+            return False
+
+        self._send_message(user_input)
+        return False
 
     def _handle_tool_calls(self, tool_calls: List) -> bool:
         """Process tool calls from LLM response.
@@ -317,8 +439,12 @@ class ChatSession:
                         f"🧠 Auto-memory refreshed: {', '.join(str(i) for i in auto_result.revived_ids)}"
                     )
                 for failure in auto_result.failures:
+                    safe_memory_text = self._sanitize_cli_text(
+                        failure.memory_text, max_len=200
+                    )
+                    safe_error = self._sanitize_cli_text(failure.error, max_len=200)
                     print(
-                        f"⚠️ Auto-memory failed for '{failure.memory_text}': {failure.error}"
+                        f"⚠️ Auto-memory failed for '{safe_memory_text}': {safe_error}"
                     )
             except Exception as e:
                 logger.error(f"Auto-memory write failed: {e}", exc_info=True)
@@ -341,9 +467,7 @@ class ChatSession:
         # or confusing models that perform better with manual XML instructions.
         ollama_tools = None if self.use_xml_tools else (self.tools or None)
 
-        stream = self.ollama_service.chat(
-            self.messages, tools=ollama_tools, stream=True
-        )
+        stream = self.llm_service.chat(self.messages, tools=ollama_tools, stream=True)
 
         full_response = ""
         thinking = ""
@@ -399,38 +523,24 @@ class ChatSession:
         Returns:
             True if store_memory_tool was executed.
         """
-        tool_map = {t.__name__: t for t in self.tools}
+        tool_map: Dict[str, Callable[..., str]] = {t.__name__: t for t in self.tools}
         memory_tool_called = False
 
         for call in tool_calls:
             fname = call.get("name")
             fargs = call.get("arguments", {})
+            if not isinstance(fname, str):
+                logger.warning(f"Skipping XML tool call without valid name: {call}")
+                continue
 
-            if fname in tool_map:
-                try:
-                    result = tool_map[fname](**fargs)
-                    if fname == "store_memory_tool":
-                        memory_tool_called = True
-                    logger.info(f"XML Tool {fname} executed: {result}")
+            if not isinstance(fargs, dict):
+                logger.warning(f"Skipping XML tool call with invalid arguments: {call}")
+                continue
 
-                    # Store result in a format the model expects (XML response)
-                    self.messages.append(
-                        {
-                            "role": "user",
-                            "content": f"<tool_response>{result}</tool_response>",
-                        }
-                    )
-                    print(f"🧠 Tool Output: {result}")
-                except Exception as e:
-                    logger.error(f"Error executing XML tool {fname}: {e}")
-                    self.messages.append(
-                        {
-                            "role": "user",
-                            "content": f"<tool_response>Error: {e}</tool_response>",
-                        }
-                    )
-            else:
-                logger.warning(f"XML Tool {fname} not found in available tools")
+            if self._execute_xml_tool(
+                tool_map=tool_map, tool_name=fname, arguments=fargs
+            ):
+                memory_tool_called = True
 
         # After tool execution, continue the conversation automatically
         print("\nAssistant (continuing): ", end="", flush=True)
@@ -439,7 +549,8 @@ class ChatSession:
 
     def run(self) -> None:
         """Run the interactive chat loop."""
-        if not self.ollama_service.check_connection():
+        if not self.llm_service.check_connection():
+            print("❌ LLM service unavailable. Check logs for details.")
             return
 
         memory_path = Path(self.context_file)
@@ -456,52 +567,9 @@ class ChatSession:
             while True:
                 try:
                     user_input = input("\n💬 You: ").strip()
-
-                    if user_input.lower() in ["/bye", "/quit", "bye", "quit", "exit"]:
-                        if self.cmd_quit():
-                            break
-                        continue
-
-                    if user_input == "/?":
-                        self.cmd_help()
-                        continue
-
-                    if user_input == "/context":
-                        self.cmd_context(show_full=True)
-                        continue
-
-                    if user_input == "/context brief":
-                        self.cmd_context(show_full=False)
-                        continue
-
-                    if user_input == "/clear":
-                        self.cmd_clear()
-                        continue
-
-                    if user_input == "/save":
-                        self.cmd_save()
-                        continue
-
-                    if user_input.startswith("/load"):
-                        tokens = user_input.split()[1:]
-                        self.cmd_load(files=tokens if tokens else None)
-                        continue
-
-                    if user_input == "/trim":
-                        self.cmd_trim()
-                        continue
-
-                    if self.memory_store:
-                        if user_input.startswith("/audit"):
-                            parts = user_input.split(maxsplit=1)
-                            operation = parts[1].strip() if len(parts) > 1 else None
-                            self.cmd_audit(operation=operation)
-                            continue
-
-                    if not user_input:
-                        continue
-
-                    self._send_message(user_input)
+                    should_exit = self._handle_user_input(user_input)
+                    if should_exit:
+                        break
 
                 except KeyboardInterrupt:
                     print("\n\nSaving before exit...")
