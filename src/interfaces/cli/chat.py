@@ -5,7 +5,7 @@ from typing import Optional
 
 from src.agent.chat_session import ChatSession
 from src.core.config import AgentConfig
-from src.services.llm.ollama_service import OllamaService
+from src.services.llm.base import LLMService
 from src.services.memory.auto_writer import AutoMemoryWriter
 from src.services.memory.vector_store import MemoryStore
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def chat_loop(
     config: AgentConfig,
     context_file: str,
-    llm_service: OllamaService,
+    llm_service: LLMService,
     memory_store: Optional[MemoryStore] = None,
     auto_memory_writer: Optional[AutoMemoryWriter] = None,
 ) -> None:

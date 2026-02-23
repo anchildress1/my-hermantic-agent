@@ -23,7 +23,7 @@ help:
 	@echo "  make test-services   - Run service tests"
 	@echo "  make test-tools      - Run tool tests"
 	@echo "  make test-flows      - Run all test flows by area"
-	@echo "  make test            - Run full test suite with coverage"
+	@echo "  make test            - Run full test suite with coverage + sonar reports"
 	@echo "  make ai-checks       - Run format + lint + all test flows + coverage gate"
 	@echo "  make logs            - Tail application logs"
 	@echo "  make clean           - Clean generated files and logs"
@@ -85,7 +85,8 @@ test-tools:
 test-flows: test-main test-core test-interfaces test-services test-tools
 
 test:
-	COVERAGE_FILE=coverage/.coverage uv run pytest --cov-config=.coveragerc --cov=src --cov-report=html:coverage/html --cov-report=term --cov-fail-under=80
+	@mkdir -p coverage
+	COVERAGE_FILE=coverage/.coverage uv run pytest --cov-config=.coveragerc --cov=src --cov-report=html:coverage/html --cov-report=term --cov-report=xml:coverage/coverage.xml --junitxml=coverage/junit.xml --cov-fail-under=80
 
 ai-checks: format lint test-flows test
 

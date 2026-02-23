@@ -215,6 +215,65 @@ def test_send_message_surfaces_full_auto_memory_failure_and_saves(capsys):
     mock_save.assert_called_once()
 
 
+def test_send_message_sanitizes_auto_memory_failure_output(capsys):
+    """Test failure output strips control/ANSI characters for safe terminal display."""
+    auto_writer = MagicMock()
+    auto_writer.last_result = AutoMemoryResult(
+        failures=[
+            AutoMemoryFailure(
+                memory_text="remember\x1b[31m leaked\npayload\x1b[0m",
+                type="fact",
+                tag="chat",
+                error="db\x1b[32m fail\rnow",
+            )
+        ]
+    )
+
+    session = ChatSession(
+        config=AgentConfig(model="test", system="sys", parameters={}),
+        context_file="default.json",
+        llm_service=MagicMock(spec=OllamaService),
+        auto_memory_writer=auto_writer,
+    )
+
+    session._handle_response = MagicMock(return_value=("assistant ok", False))
+
+    with patch("src.agent.chat_session.save_chat_history"):
+        session._send_message("hello")
+
+    out = capsys.readouterr().out
+    assert "\x1b[" not in out
+    assert "remember leaked payload" in out
+    assert "db fail now" in out
+
+
+def test_cmd_audit_sanitizes_details(capsys):
+    """Test audit output sanitizes detail payloads for terminal safety."""
+    mock_store = MagicMock()
+    mock_store.list_events.return_value = [
+        {
+            "id": 7,
+            "memory_id": 9,
+            "operation": "remember",
+            "status": "error",
+            "details": {"error": "bad\x1b[31m\npayload"},
+            "created_at": "2026-02-22T00:00:00Z",
+        }
+    ]
+
+    session = ChatSession(
+        config=AgentConfig(model="test", system="sys", parameters={}),
+        context_file="default.json",
+        llm_service=MagicMock(spec=OllamaService),
+        memory_store=mock_store,
+    )
+
+    session.cmd_audit(operation="remember")
+    out = capsys.readouterr().out
+    assert "\x1b[" not in out
+    assert "bad payload" in out
+
+
 def test_run_keyboard_interrupt_closes_memory_store(capsys):
     """Test run handles KeyboardInterrupt and closes memory store in finally."""
     mock_store = MagicMock()

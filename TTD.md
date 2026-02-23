@@ -1,7 +1,7 @@
 # TTD
 
 - [x] Move db out of public
-- [ ] separate llm from cli
+- [x] separate llm from cli
 
 ## Memory TTD
 

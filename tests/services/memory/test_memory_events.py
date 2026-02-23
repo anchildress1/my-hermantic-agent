@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.services.memory.vector_store import MemoryStore
+from src.services.memory.vector_store import MemoryReconciliationError, MemoryStore
 
 
 def make_store(monkeypatch):
@@ -289,6 +289,69 @@ def test_remember_revives_tombstone_before_insert(monkeypatch):
     details = store._record_event.call_args.kwargs["details"]
     assert details["action"] == "revived_tombstone"
     assert details["reconciliation"] == "update"
+
+
+def test_remember_stops_insert_when_merge_errors(monkeypatch):
+    store = make_store(monkeypatch)
+
+    def merge_failure(**_kwargs):
+        store._set_last_error(
+            operation="merge_exact_memory",
+            error="deadlock detected",
+            details={"memory_preview": "User prefers deterministic tests"},
+        )
+        raise MemoryReconciliationError("merge_exact_memory failed: deadlock detected")
+
+    store.merge_exact_memory = MagicMock(side_effect=merge_failure)
+    store.revive_tombstoned_memory = MagicMock()
+    store._record_event = MagicMock()
+    store._get_embedding = MagicMock(
+        side_effect=AssertionError("embedding should not run when merge fails")
+    )
+
+    memory_id = store.remember.__wrapped__(
+        store,
+        memory_text="User prefers deterministic tests",
+        type="preference",
+        context="coding",
+    )
+
+    assert memory_id is None
+    store.revive_tombstoned_memory.assert_not_called()
+    details = store._record_event.call_args.kwargs["details"]
+    assert details["error_type"] == "ReconciliationError"
+    assert details["failed_operation"] == "merge_exact_memory"
+
+
+def test_remember_stops_insert_when_revive_errors(monkeypatch):
+    store = make_store(monkeypatch)
+    store.merge_exact_memory = MagicMock(return_value=None)
+
+    def revive_failure(**_kwargs):
+        store._set_last_error(
+            operation="revive_tombstoned_memory",
+            error="tuple lock",
+            details={"memory_preview": "User archived legacy plans"},
+        )
+        raise MemoryReconciliationError("revive_tombstoned_memory failed: tuple lock")
+
+    store.revive_tombstoned_memory = MagicMock(side_effect=revive_failure)
+    store._record_event = MagicMock()
+    store._get_embedding = MagicMock(
+        side_effect=AssertionError("embedding should not run when revive fails")
+    )
+
+    memory_id = store.remember.__wrapped__(
+        store,
+        memory_text="User archived legacy plans",
+        type="fact",
+        context="ops",
+    )
+
+    assert memory_id is None
+    details = store._record_event.call_args.kwargs["details"]
+    assert details["error_type"] == "ReconciliationError"
+    assert details["failed_operation"] == "revive_tombstoned_memory"
 
 
 def test_forget_already_tombstoned_records_lifecycle_event(monkeypatch):
