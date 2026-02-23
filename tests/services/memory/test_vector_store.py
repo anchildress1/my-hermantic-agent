@@ -83,7 +83,7 @@ def test_recall_semantic(store, mock_db_connection, mock_openai):
 
     assert len(results) == 1
     assert results[0]["memory_text"] == "Test memory"
-    assert results[0]["similarity"] == 0.95
+    assert results[0]["similarity"] == pytest.approx(0.95)
 
 
 def test_recall_with_filters(store, mock_db_connection, mock_openai):
