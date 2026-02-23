@@ -163,7 +163,7 @@ ______________________________________________________________________
 ## Next Steps
 
 - Read [README.md](../../README.md) for detailed documentation
-- Check [docs/agent-memory.md](../../docs/agent-memory.md) for API reference
+- Check [AGENTS.md](../../AGENTS.md#7-agent-memory-source-of-truth) for memory behavior reference
 - Customize `config/template.yaml` for different models/prompts
 - Run tests: `make test`
 

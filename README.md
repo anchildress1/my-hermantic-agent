@@ -64,7 +64,7 @@ ______________________________________________________________________
 - 📖 **[User Guide](docs/user-guides/project-overview.md)** - How to use the agent effectively
 - 🏗️ **[Architecture](docs/system-architecture.md)** - System design and data flow
 - 🎛️ **[Model Parameters](docs/model-parameter-options.md)** - Hermes-4 configuration guide
-- 🔧 **[Memory API](docs/agent-memory.md)** - Semantic memory reference
+- 🔧 **[Memory System](AGENTS.md#7-agent-memory-source-of-truth)** - Canonical semantic memory reference
 - 🚀 **[Quick Start](docs/user-guides/quickstart.md)** - 5-minute setup guide
 
 ______________________________________________________________________
