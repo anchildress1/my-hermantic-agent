@@ -1,11 +1,13 @@
-import yaml
 import logging
 from pathlib import Path
 from typing import Optional
+
+import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
+TEMPLATE_CONFIG_PATH = Path("config/template.yaml")
 
 
 class Settings(BaseSettings):
@@ -29,7 +31,7 @@ class Settings(BaseSettings):
     langmem_temperature: float = 0.2
     langmem_max_memories_per_turn: int = 2
     langmem_default_tag: str = "chat"
-    template_config: Path = Path("config/template.yaml")
+    template_config: Path = TEMPLATE_CONFIG_PATH
     environment: str = Field(
         "development", description="Runtime environment (development, production, test)"
     )
@@ -71,24 +73,24 @@ def get_config_path(
         logger.warning(f"Profile config not found: {config_path}, falling back")
 
     # Check if TEMPLATE_CONFIG is explicitly set
-    if settings.template_config != Path("config/template.yaml"):
+    if settings.template_config != TEMPLATE_CONFIG_PATH:
         return settings.template_config
 
     # Environment-based config selection
     env_map = {
-        "development": "config/template.yaml",
-        "dev": "config/template.yaml",
-        "production": "config/template.yaml",  # Can be changed to prod.yaml when created
-        "prod": "config/template.yaml",
-        "test": "config/template.yaml",
+        "development": TEMPLATE_CONFIG_PATH,
+        "dev": TEMPLATE_CONFIG_PATH,
+        "production": TEMPLATE_CONFIG_PATH,  # Can be changed to prod.yaml when created
+        "prod": TEMPLATE_CONFIG_PATH,
+        "test": TEMPLATE_CONFIG_PATH,
     }
 
-    env_config = Path(env_map.get(settings.environment.lower(), "config/template.yaml"))
+    env_config = env_map.get(settings.environment.lower(), TEMPLATE_CONFIG_PATH)
     if env_config.exists():
         return env_config
 
     # Final fallback
-    return Path("config/template.yaml")
+    return TEMPLATE_CONFIG_PATH
 
 
 class ModelParameters(BaseModel):

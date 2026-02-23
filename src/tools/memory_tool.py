@@ -1,10 +1,14 @@
 import logging
+from typing import Callable, Optional
+
 from src.services.memory.vector_store import MemoryStore
 
 logger = logging.getLogger(__name__)
 
 
-def create_store_memory_tool(memory_store: MemoryStore):
+def create_store_memory_tool(
+    memory_store: Optional[MemoryStore],
+) -> Callable[[str, str, str, float, float], str]:
     """Create the store_memory_tool function bound to a memory store."""
 
     def store_memory_tool(
