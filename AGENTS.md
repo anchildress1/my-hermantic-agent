@@ -7,6 +7,11 @@ This document defines the coding standards, architectural patterns, and context 
 - `AGENTS.md` captures assistant-facing repository instructions (what Codex should remember about working in this repo).
 - User-facing product behavior docs stay under `docs/` (for example, `docs/agent-memory.md` describes the app's memory system behavior).
 
+## Workflow Pinning Guardrail
+
+- In GitHub Actions workflows, pin all non-`actions/*` actions to a full commit SHA.
+- After each pinned SHA, include an inline comment with the exact upstream version tag (for example `# v7.3.0`).
+
 ## 1. Project Identity
 
 - **Name:** My Hermantic Agent
