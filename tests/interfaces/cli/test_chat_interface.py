@@ -294,3 +294,42 @@ def test_run_keyboard_interrupt_closes_memory_store(capsys):
     out = capsys.readouterr().out
     assert "Saving before exit" in out
     mock_store.close.assert_called_once()
+
+
+def test_handle_response_supports_dict_stream_chunks():
+    """Test streamed responses handle dict-shaped Ollama payloads."""
+    mock_llm = MagicMock(spec=OllamaService)
+    mock_llm.chat.return_value = iter(
+        [
+            {"message": {"content": "hello ", "thinking": "thought ", "tool_calls": []}},
+            {"message": {"content": "world", "thinking": "done"}},
+        ]
+    )
+
+    session = ChatSession(
+        config=AgentConfig(model="test", system="sys", parameters={}),
+        context_file="default.json",
+        llm_service=mock_llm,
+    )
+
+    response, memory_tool_called = session._handle_response()
+
+    assert response == "hello world"
+    assert memory_tool_called is False
+    assert session.messages[-1]["content"] == "hello world"
+    assert session.messages[-1]["thinking"] == "thought done"
+
+
+def test_handle_xml_tool_calls_propagates_continuation_tool_flag():
+    """Test continuation responses propagate memory-tool usage."""
+    session = ChatSession(
+        config=AgentConfig(model="test", system="sys", parameters={"use_xml_tools": True}),
+        context_file="default.json",
+        llm_service=MagicMock(spec=OllamaService),
+    )
+    session._handle_response = MagicMock(return_value=("continued", True))
+
+    memory_tool_called = session._handle_xml_tool_calls([])
+
+    assert memory_tool_called is True
+    session._handle_response.assert_called_once()

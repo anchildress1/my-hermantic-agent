@@ -467,6 +467,13 @@ class ChatSession:
             return None
         return self.tools or None
 
+    @staticmethod
+    def _read_payload_value(payload: Any, key: str, default: Any) -> Any:
+        """Read values from either object-style or dict-style payloads."""
+        if isinstance(payload, dict):
+            return payload.get(key, default)
+        return getattr(payload, key, default)
+
     def _stream_assistant_response(
         self, ollama_tools: Optional[List[Callable[..., str]]]
     ) -> tuple[str, str, List[Any]]:
@@ -477,10 +484,10 @@ class ChatSession:
         thinking = ""
         tool_calls: List[Any] = []
         for chunk in stream:
-            msg = chunk.message
-            content = msg.content or ""
-            chunk_thinking = msg.thinking or ""
-            chunk_tools = msg.tool_calls or []
+            msg = self._read_payload_value(chunk, "message", {})
+            content = self._read_payload_value(msg, "content", "") or ""
+            chunk_thinking = self._read_payload_value(msg, "thinking", "") or ""
+            chunk_tools = self._read_payload_value(msg, "tool_calls", []) or []
 
             if chunk_thinking:
                 thinking += chunk_thinking
@@ -577,7 +584,8 @@ class ChatSession:
 
         # After tool execution, continue the conversation automatically
         print("\nAssistant (continuing): ", end="", flush=True)
-        self._handle_response()
+        _, continued_memory_tool_called = self._handle_response()
+        memory_tool_called = memory_tool_called or continued_memory_tool_called
         return memory_tool_called
 
     def run(self) -> None:
