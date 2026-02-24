@@ -31,6 +31,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Require SONAR_TOKEN
+        timeout-minutes: 1
+        run: |
+          if [ -z "${SONAR_TOKEN}" ]; then
+            echo "::error::SONAR_TOKEN secret is required for CI."
+            exit 1
+          fi
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
