@@ -135,7 +135,7 @@ def parse_tool_calls(content: str) -> list[dict[str, Any]]:
             normalized = _normalize_tool_call(raw_data)
             if normalized:
                 calls.append(normalized)
-        except (JSONDecodeError, TypeError, ValueError):
+        except JSONDecodeError:
             continue
 
     return calls
