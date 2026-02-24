@@ -3,11 +3,12 @@
 import logging
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from src.core.config import AgentConfig
 from src.core.utils import count_message_tokens, estimate_tokens, trim_context
-from src.services.llm.ollama_service import OllamaService
+from src.services.llm.base import LLMService
+from src.services.memory.auto_writer import AutoMemoryWriter
 from src.services.memory.vector_store import MemoryStore
 from src.services.memory.file_storage import (
     load_chat_history,
@@ -23,18 +24,23 @@ logger = logging.getLogger(__name__)
 class ChatSession:
     """Manages chat session state and command execution."""
 
+    ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+    CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
     ANSI_RESET = "\u001b[0m"
     ANSI_BOLD = "\u001b[1m"
     ANSI_CYAN = "\u001b[36m"
     ANSI_YELLOW = "\u001b[33m"
     ANSI_GREEN = "\u001b[32m"
+    EXIT_INPUTS = {"/bye", "/quit", "bye", "quit", "exit"}
+    MEMORY_STORE_UNAVAILABLE_MSG = "❌ Memory store not available"
 
     def __init__(
         self,
         config: AgentConfig,
         context_file: str,
-        llm_service: OllamaService,
+        llm_service: LLMService,
         memory_store: Optional[MemoryStore] = None,
+        auto_memory_writer: Optional[AutoMemoryWriter] = None,
     ):
         """Initialize chat session.
 
@@ -43,11 +49,13 @@ class ChatSession:
             context_file: Path to save/load conversation history
             llm_service: Injected LLM service instance
             memory_store: Optional vector memory store for semantic memory operations
+            auto_memory_writer: Optional policy-guided auto-memory writer
         """
         self.config = config
         self.context_file = context_file
         self.memory_store = memory_store
-        self.ollama_service = llm_service
+        self.auto_memory_writer = auto_memory_writer
+        self.llm_service = llm_service
 
         self.model = config.model
         self.system_prompt = config.system
@@ -55,6 +63,16 @@ class ChatSession:
 
         self.max_context = self.params.num_ctx
         self.max_history_tokens = int(self.max_context * 0.75)
+
+        if self.memory_store:
+            self.system_prompt = (
+                f"{self.system_prompt}\n\n"
+                "Memory policy:\n"
+                "- Memory is automatic. Do not ask the user for slash commands.\n"
+                "- If the user explicitly asks to remember something, call store_memory_tool.\n"
+                "- Explicit remember intent should use high importance (>=2.0).\n"
+                "- Keep memories atomic and durable."
+            )
 
         self.messages: List[Dict] = [{"role": "system", "content": self.system_prompt}]
 
@@ -94,26 +112,13 @@ class ChatSession:
         )
         if self.memory_store:
             print()
+            print(f"{self.ANSI_BOLD}Memory{self.ANSI_RESET} (automatic)")
             print(
-                f"{self.ANSI_BOLD}Memory Commands{self.ANSI_RESET} (cloud PostgreSQL only)"
+                "  Ask naturally, for example: "
+                "'remember that I prefer Python for backend work'."
             )
             print(
-                f"  {self.ANSI_CYAN}/remember <text>{self.ANSI_RESET}      Store a memory (supports type=, tag=, importance=, confidence=)"
-            )
-            print(
-                f"  {self.ANSI_CYAN}/recall <query>{self.ANSI_RESET}       Search semantic memories"
-            )
-            print(
-                f"  {self.ANSI_CYAN}/memories [tag]{self.ANSI_RESET}       List recent memories or by tag"
-            )
-            print(
-                f"  {self.ANSI_CYAN}/forget <id>{self.ANSI_RESET}          Delete memory by ID"
-            )
-            print(
-                f"  {self.ANSI_CYAN}/tags{self.ANSI_RESET}                 List memory tags"
-            )
-            print(
-                f"  {self.ANSI_CYAN}/stats{self.ANSI_RESET}                Show memory statistics"
+                f"  {self.ANSI_CYAN}/audit [operation]{self.ANSI_RESET}    Show recent memory audit events (operator view)"
             )
         print()
 
@@ -175,6 +180,36 @@ class ChatSession:
                 f"{self.ANSI_YELLOW}⚠️  No saved context loaded from: {' '.join(files)}{self.ANSI_RESET}"
             )
 
+    @classmethod
+    def _sanitize_cli_text(cls, value: object, max_len: int = 200) -> str:
+        """Normalize output for terminal-safe display."""
+        text = str(value)
+        text = text.replace("\r", " ").replace("\n", " ")
+        text = cls.ANSI_ESCAPE_PATTERN.sub("", text)
+        text = cls.CONTROL_CHAR_PATTERN.sub("", text)
+        text = " ".join(text.split())
+        if len(text) > max_len:
+            return f"{text[:max_len]}..."
+        return text
+
+    @classmethod
+    def _sanitize_details_payload(cls, payload: Any) -> Any:
+        """Recursively sanitize structured payloads for safe terminal output."""
+        if isinstance(payload, dict):
+            return {
+                cls._sanitize_cli_text(key, max_len=80): cls._sanitize_details_payload(
+                    value
+                )
+                for key, value in payload.items()
+            }
+        if isinstance(payload, list):
+            return [cls._sanitize_details_payload(item) for item in payload]
+        if isinstance(payload, tuple):
+            return tuple(cls._sanitize_details_payload(item) for item in payload)
+        if isinstance(payload, str):
+            return cls._sanitize_cli_text(payload, max_len=200)
+        return payload
+
     def cmd_trim(self) -> None:
         """Trim conversation to fit within token limits."""
         self.messages, was_trimmed = trim_context(
@@ -212,199 +247,134 @@ class ChatSession:
             print(f"  {content}")
         print("=" * 60 + "\n")
 
-    def cmd_remember(self, args: str) -> None:
-        """Store a memory.
+    def cmd_audit(self, operation: Optional[str] = None) -> None:
+        """Show recent memory audit events.
 
         Args:
-            args: Memory text with optional type=, tag=, importance=, confidence= parameters
+            operation: Optional operation filter (remember, recall, forget, auto_remember)
         """
         if not self.memory_store:
-            print("❌ Memory store not available")
-            return
-
-        if not args:
-            print("Usage: /remember [params] <text>")
-            return
-
-        memory_type = "fact"
-        tag = None
-        importance = 1.0  # Default within valid range [0-3]
-        confidence = 0.8
-
-        type_match = re.search(r"type=(\w+)", args)
-        if type_match:
-            memory_type = type_match.group(1)
-            args = re.sub(r"type=\w+\s*", "", args)
-
-        tag_match = re.search(r"tag=(\w+)", args)
-        if tag_match:
-            tag = tag_match.group(1)
-            args = re.sub(r"tag=\w+\s*", "", args)
-
-        importance_match = re.search(r"importance=([\d.]+)", args)
-        if importance_match:
-            importance = float(importance_match.group(1))
-            # Clamp to valid range [0-3]
-            importance = max(0.0, min(3.0, importance))
-            args = re.sub(r"importance=[\d.]+\s*", "", args)
-
-        confidence_match = re.search(r"confidence=([\d.]+)", args)
-        if confidence_match:
-            confidence = float(confidence_match.group(1))
-            args = re.sub(r"confidence=[\d.]+\s*", "", args)
-
-        text = args.strip()
-        if not text:
-            print("Usage: /remember [params] <text>")
+            print(self.MEMORY_STORE_UNAVAILABLE_MSG)
             return
 
         try:
-            mem_id = self.memory_store.remember(
-                text,
-                memory_type,
-                context=tag or "chat",
-                importance=importance,
-                confidence=confidence,
-            )
-            if mem_id:
-                print(f"✓ Memory stored with ID {mem_id}")
-        except Exception as e:
-            logger.error(f"Error storing memory: {e}", exc_info=True)
-            print(f"❌ Error: {e}")
-
-    def cmd_recall(self, query: str) -> None:
-        """Search semantic memories.
-
-        Args:
-            query: Search query
-        """
-        if not self.memory_store:
-            print("❌ Memory store not available")
-            return
-
-        if not query:
-            print("Usage: /recall <query>")
-            return
-
-        try:
-            results = self.memory_store.recall(query, limit=5)
-            if results:
-                print(f"\n🔍 Found {len(results)} relevant memories:\n")
-                for r in results:
-                    print(
-                        f"  [{r['id']}] {r['type']} | {r['tag']} - {r['memory_text']}"
-                    )
-            else:
-                print("  No memories found")
-        except Exception as e:
-            logger.error(f"Error recalling memories: {e}", exc_info=True)
-            print(f"❌ Error: {e}")
-
-    def cmd_memories(self, tag: Optional[str] = None) -> None:
-        """List recent memories or memories by tag.
-
-        Args:
-            tag: Optional tag filter
-        """
-        if not self.memory_store:
-            print("❌ Memory store not available")
-            return
-
-        try:
-            # Use proper MemoryStore API with DB-level filtering
-            results = self.memory_store.list_memories(tag=tag, limit=20)
-
-            if tag:
-                print(f"\n📚 Memories tagged '{tag}':\n")
-            else:
-                print("\n📚 Recent memories:\n")
-
-            if results:
-                for r in results:
-                    print(
-                        f"  [{r['id']}] {r['type']} | {r['tag']} - {r['memory_text']}"
-                    )
-            else:
-                print("  No memories found")
-        except Exception as e:
-            logger.error(f"Error listing memories: {e}", exc_info=True)
-            print(f"❌ Error: {e}")
-
-    def cmd_forget(self, memory_id: str) -> None:
-        """Delete a memory by ID.
-
-        Args:
-            memory_id: Memory ID to delete
-        """
-        if not self.memory_store:
-            print("❌ Memory store not available")
-            return
-
-        if not memory_id:
-            print("Usage: /forget <id>")
-            return
-
-        try:
-            self.memory_store.forget(memory_id)
-            print(f"✓ Memory {memory_id} deleted")
-        except Exception as e:
-            logger.error(f"Error deleting memory: {e}", exc_info=True)
-            print(f"❌ Error: {e}")
-
-    def cmd_tags(self) -> None:
-        """List all memory tags."""
-        if not self.memory_store:
-            print("❌ Memory store not available")
-            return
-
-        try:
-            tags = self.memory_store.list_tags()
-            if tags:
-                print("\n🏷️  Available tags:\n")
-                for tag in tags:
-                    print(f"  - {tag}")
-            else:
-                print("  No tags found")
-        except Exception as e:
-            logger.error(f"Error listing tags: {e}", exc_info=True)
-            print(f"❌ Error: {e}")
-
-    def cmd_stats(self) -> None:
-        """Show memory statistics."""
-        if not self.memory_store:
-            print("❌ Memory store not available")
-            return
-
-        try:
-            stats = self.memory_store.stats()
-            if not stats:
-                print(
-                    "⚠️  No statistics available (database may be empty or unreachable)"
-                )
+            events = self.memory_store.list_events(limit=20, operation=operation)
+            if not events:
+                print("No memory events found")
                 return
 
-            print("\n📊 Memory Statistics:\n")
-            print(f"  Total memories: {stats.get('total_memories', 0)}")
-            print(f"  Total tags:     {stats.get('total_tags', 0)}")
-
-            types = stats.get("memory_types", {})
-            if types:
-                print("  Memory types:")
-                for mtype, count in types.items():
-                    print(f"    - {mtype}: {count}")
-            else:
-                print(f"  Memory types: {stats.get('total_types', 0)} (unique)")
-
+            print("\n🧾 Memory Events:\n")
+            for event in events:
+                details = event.get("details") or {}
+                memory_id = event.get("memory_id")
+                print(
+                    f"  [{event.get('id')}] {event.get('created_at')} | "
+                    f"{event.get('operation')} | {event.get('status')} | memory_id={memory_id}"
+                )
+                if details:
+                    safe_details = self._sanitize_details_payload(details)
+                    summary = self._sanitize_cli_text(safe_details, max_len=200)
+                    print(f"      details: {summary}")
         except Exception as e:
-            logger.error(f"Error getting stats: {e}", exc_info=True)
+            logger.error(f"Error getting audit events: {e}", exc_info=True)
             print(f"❌ Error: {e}")
 
-    def _handle_tool_calls(self, tool_calls: List) -> None:
+    def _append_xml_tool_response(self, payload: str) -> None:
+        """Append tool response payload for XML-tool continuation flow."""
+        self.messages.append(
+            {"role": "user", "content": f"<tool_response>{payload}</tool_response>"}
+        )
+
+    def _execute_xml_tool(
+        self,
+        tool_map: Dict[str, Callable[..., str]],
+        tool_name: str,
+        arguments: Dict[str, Any],
+    ) -> bool:
+        """Execute a single XML tool call and append its response.
+
+        Returns:
+            True when store_memory_tool ran successfully.
+        """
+        tool_func = tool_map.get(tool_name)
+        if tool_func is None:
+            logger.warning(f"XML Tool {tool_name} not found in available tools")
+            return False
+
+        try:
+            result = tool_func(**arguments)
+            logger.info(f"XML Tool {tool_name} executed: {result}")
+            self._append_xml_tool_response(str(result))
+            print(f"🧠 Tool Output: {result}")
+            return tool_name == "store_memory_tool"
+        except Exception as e:
+            logger.error(f"Error executing XML tool {tool_name}: {e}")
+            self._append_xml_tool_response(f"Error: {e}")
+            return False
+
+    def _run_command(self, user_input: str) -> bool:
+        """Run slash commands. Returns True when a command was handled."""
+        if user_input == "/?":
+            self.cmd_help()
+            return True
+
+        if user_input == "/context":
+            self.cmd_context(show_full=True)
+            return True
+
+        if user_input == "/context brief":
+            self.cmd_context(show_full=False)
+            return True
+
+        if user_input == "/clear":
+            self.cmd_clear()
+            return True
+
+        if user_input == "/save":
+            self.cmd_save()
+            return True
+
+        if user_input.startswith("/load"):
+            tokens = user_input.split()[1:]
+            self.cmd_load(files=tokens if tokens else None)
+            return True
+
+        if user_input == "/trim":
+            self.cmd_trim()
+            return True
+
+        if self.memory_store and user_input.startswith("/audit"):
+            parts = user_input.split(maxsplit=1)
+            operation = parts[1].strip() if len(parts) > 1 else None
+            self.cmd_audit(operation=operation)
+            return True
+
+        return False
+
+    def _handle_user_input(self, user_input: str) -> bool:
+        """Handle one user input line. Returns True when session should exit."""
+        if user_input.lower() in self.EXIT_INPUTS:
+            return self.cmd_quit()
+
+        if self._run_command(user_input):
+            return False
+
+        if not user_input:
+            return False
+
+        self._send_message(user_input)
+        return False
+
+    def _handle_tool_calls(self, tool_calls: List) -> bool:
         """Process tool calls from LLM response.
 
         Args:
             tool_calls: List of tool call objects from LLM
+
+        Returns:
+            True if store_memory_tool was executed.
         """
+        memory_tool_called = False
         for call in tool_calls:
             func = call.function
             fname = func.name
@@ -413,6 +383,7 @@ class ChatSession:
             if fname == "store_memory_tool" and self.memory_store:
                 tool_func = create_store_memory_tool(self.memory_store)
                 result = tool_func(**fargs)
+                memory_tool_called = True
 
                 logger.info(f"Tool result: {result}")
                 self.messages.append(
@@ -423,6 +394,7 @@ class ChatSession:
                     }
                 )
                 print(f"🧠 {result}")
+        return memory_tool_called
 
     def _send_message(self, user_input: str) -> None:
         """Send user message to LLM and handle response.
@@ -445,7 +417,37 @@ class ChatSession:
 
         print("\n🤖 Assistant: ", end="", flush=True)
 
-        self._handle_response()
+        assistant_text, memory_tool_called = self._handle_response()
+
+        if (
+            self.auto_memory_writer
+            and assistant_text.strip()
+            and not memory_tool_called
+        ):
+            try:
+                self.auto_memory_writer.process_turn(
+                    user_message=user_input,
+                    assistant_message=assistant_text,
+                )
+                auto_result = self.auto_memory_writer.last_result
+                if auto_result.inserted_ids:
+                    print(
+                        f"🧠 Auto-memory stored: {', '.join(str(i) for i in auto_result.inserted_ids)}"
+                    )
+                if auto_result.revived_ids:
+                    print(
+                        f"🧠 Auto-memory refreshed: {', '.join(str(i) for i in auto_result.revived_ids)}"
+                    )
+                for failure in auto_result.failures:
+                    safe_memory_text = self._sanitize_cli_text(
+                        failure.memory_text, max_len=200
+                    )
+                    safe_error = self._sanitize_cli_text(failure.error, max_len=200)
+                    print(
+                        f"⚠️ Auto-memory failed for '{safe_memory_text}': {safe_error}"
+                    )
+            except Exception as e:
+                logger.error(f"Auto-memory write failed: {e}", exc_info=True)
 
         current_tokens = count_message_tokens(self.messages)
         usage_pct = (current_tokens / self.max_history_tokens) * 100
@@ -456,26 +458,36 @@ class ChatSession:
         if usage_pct > 90:
             print("⚠️  Context nearly full - will auto-trim on next message")
 
-    def _handle_response(self) -> None:
-        """Handle LLM streaming response."""
-        # If using XML tools, we don't pass 'tools' to Ollama API to avoid double-handling
-        # or confusing models that perform better with manual XML instructions.
-        ollama_tools = None if self.use_xml_tools else (self.tools or None)
+        # Persist each turn so abrupt termination loses less context.
+        save_chat_history(self.messages, self.context_file)
 
-        stream = self.ollama_service.chat(
-            self.messages, tools=ollama_tools, stream=True
-        )
+    def _resolve_ollama_tools(self) -> Optional[List[Callable[..., str]]]:
+        """Resolve tool payload for Ollama requests."""
+        if self.use_xml_tools:
+            return None
+        return self.tools or None
+
+    @staticmethod
+    def _read_payload_value(payload: Any, key: str, default: Any) -> Any:
+        """Read values from either object-style or dict-style payloads."""
+        if isinstance(payload, dict):
+            return payload.get(key, default)
+        return getattr(payload, key, default)
+
+    def _stream_assistant_response(
+        self, ollama_tools: Optional[List[Callable[..., str]]]
+    ) -> tuple[str, str, List[Any]]:
+        """Stream assistant output and collect response metadata."""
+        stream = self.llm_service.chat(self.messages, tools=ollama_tools, stream=True)
 
         full_response = ""
         thinking = ""
-        tool_calls_list = []
-
+        tool_calls: List[Any] = []
         for chunk in stream:
-            msg = chunk.message
-
-            content = msg.content or ""
-            chunk_thinking = msg.thinking or ""
-            chunk_tools = msg.tool_calls or []
+            msg = self._read_payload_value(chunk, "message", {})
+            content = self._read_payload_value(msg, "content", "") or ""
+            chunk_thinking = self._read_payload_value(msg, "thinking", "") or ""
+            chunk_tools = self._read_payload_value(msg, "tool_calls", []) or []
 
             if chunk_thinking:
                 thinking += chunk_thinking
@@ -485,71 +497,101 @@ class ChatSession:
                 full_response += content
 
             if chunk_tools:
-                tool_calls_list.extend(chunk_tools)
+                tool_calls.extend(chunk_tools)
 
         print()
+        return full_response, thinking, tool_calls
 
-        assistant_msg = {"role": "assistant", "content": full_response}
+    @staticmethod
+    def _build_assistant_message(
+        full_response: str,
+        thinking: str,
+        tool_calls: List[Any],
+    ) -> Dict[str, Any]:
+        """Construct assistant message payload for chat history."""
+        assistant_msg: Dict[str, Any] = {"role": "assistant", "content": full_response}
         if thinking:
             assistant_msg["thinking"] = thinking
-        if tool_calls_list:
-            assistant_msg["tool_calls"] = tool_calls_list
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+        return assistant_msg
 
-        self.messages.append(assistant_msg)
+    def _process_response_tool_calls(
+        self, tool_calls: List[Any], full_response: str
+    ) -> bool:
+        """Handle native and XML tool calls found in a response."""
+        memory_tool_called = False
+        if tool_calls:
+            memory_tool_called = self._handle_tool_calls(tool_calls)
 
-        # Check for native tool calls
-        if tool_calls_list:
-            self._handle_tool_calls(tool_calls_list)
-
-        # Check for manual XML tool calls if enabled
         if self.use_xml_tools:
             xml_tool_calls = parse_tool_calls(full_response)
             if xml_tool_calls:
-                self._handle_xml_tool_calls(xml_tool_calls)
+                memory_tool_called = (
+                    self._handle_xml_tool_calls(xml_tool_calls) or memory_tool_called
+                )
 
-    def _handle_xml_tool_calls(self, tool_calls: List[Dict]) -> None:
+        return memory_tool_called
+
+    def _handle_response(self) -> tuple[str, bool]:
+        """Handle LLM streaming response."""
+        # If using XML tools, we don't pass 'tools' to Ollama API to avoid double-handling
+        # or confusing models that perform better with manual XML instructions.
+        ollama_tools = self._resolve_ollama_tools()
+        full_response, thinking, tool_calls = self._stream_assistant_response(
+            ollama_tools=ollama_tools
+        )
+        self.messages.append(
+            self._build_assistant_message(
+                full_response=full_response,
+                thinking=thinking,
+                tool_calls=tool_calls,
+            )
+        )
+        memory_tool_called = self._process_response_tool_calls(
+            tool_calls=tool_calls,
+            full_response=full_response,
+        )
+        return full_response, memory_tool_called
+
+    def _handle_xml_tool_calls(self, tool_calls: List[Dict]) -> bool:
         """Process manual XML tool calls.
 
         Args:
             tool_calls: List of parsed tool calls {"name":..., "arguments":...}
+
+        Returns:
+            True if store_memory_tool was executed.
         """
-        tool_map = {t.__name__: t for t in self.tools}
+        tool_map: Dict[str, Callable[..., str]] = {t.__name__: t for t in self.tools}
+        memory_tool_called = False
 
         for call in tool_calls:
             fname = call.get("name")
             fargs = call.get("arguments", {})
+            if not isinstance(fname, str):
+                logger.warning(f"Skipping XML tool call without valid name: {call}")
+                continue
 
-            if fname in tool_map:
-                try:
-                    result = tool_map[fname](**fargs)
-                    logger.info(f"XML Tool {fname} executed: {result}")
+            if not isinstance(fargs, dict):
+                logger.warning(f"Skipping XML tool call with invalid arguments: {call}")
+                continue
 
-                    # Store result in a format the model expects (XML response)
-                    self.messages.append(
-                        {
-                            "role": "user",
-                            "content": f"<tool_response>{result}</tool_response>",
-                        }
-                    )
-                    print(f"🧠 Tool Output: {result}")
-                except Exception as e:
-                    logger.error(f"Error executing XML tool {fname}: {e}")
-                    self.messages.append(
-                        {
-                            "role": "user",
-                            "content": f"<tool_response>Error: {e}</tool_response>",
-                        }
-                    )
-            else:
-                logger.warning(f"XML Tool {fname} not found in available tools")
+            if self._execute_xml_tool(
+                tool_map=tool_map, tool_name=fname, arguments=fargs
+            ):
+                memory_tool_called = True
 
         # After tool execution, continue the conversation automatically
         print("\nAssistant (continuing): ", end="", flush=True)
-        self._handle_response()
+        _, continued_memory_tool_called = self._handle_response()
+        memory_tool_called = memory_tool_called or continued_memory_tool_called
+        return memory_tool_called
 
     def run(self) -> None:
         """Run the interactive chat loop."""
-        if not self.ollama_service.check_connection():
+        if not self.llm_service.check_connection():
+            print("❌ LLM service unavailable. Check logs for details.")
             return
 
         memory_path = Path(self.context_file)
@@ -562,86 +604,22 @@ class ChatSession:
         print(f"Type {self.ANSI_CYAN}/?{self.ANSI_RESET} for commands")
         print()
 
-        while True:
-            try:
-                user_input = input("\n💬 You: ").strip()
-
-                if user_input.lower() in ["/bye", "/quit"]:
-                    if self.cmd_quit():
+        try:
+            while True:
+                try:
+                    user_input = input("\n💬 You: ").strip()
+                    should_exit = self._handle_user_input(user_input)
+                    if should_exit:
                         break
-                    continue
 
-                if user_input == "/?":
-                    self.cmd_help()
-                    continue
-
-                if user_input == "/context":
-                    self.cmd_context(show_full=True)
-                    continue
-
-                if user_input == "/context brief":
-                    self.cmd_context(show_full=False)
-                    continue
-
-                if user_input == "/clear":
-                    self.cmd_clear()
-                    continue
-
-                if user_input == "/save":
-                    self.cmd_save()
-                    continue
-
-                if user_input.startswith("/load"):
-                    tokens = user_input.split()[1:]
-                    self.cmd_load(files=tokens if tokens else None)
-                    continue
-
-                if user_input == "/trim":
-                    self.cmd_trim()
-                    continue
-
-                if self.memory_store:
-                    if user_input.startswith("/remember "):
-                        args = user_input[10:].strip()
-                        self.cmd_remember(args)
-                        continue
-
-                    if user_input.startswith("/recall "):
-                        query = user_input[8:].strip()
-                        self.cmd_recall(query)
-                        continue
-
-                    if user_input.startswith("/memories"):
-                        parts = user_input.split(maxsplit=1)
-                        tag = parts[1] if len(parts) > 1 else None
-                        self.cmd_memories(tag)
-                        continue
-
-                    if user_input.startswith("/forget "):
-                        memory_id = user_input[8:].strip()
-                        self.cmd_forget(memory_id)
-                        continue
-
-                    if user_input == "/tags":
-                        self.cmd_tags()
-                        continue
-
-                    if user_input == "/stats":
-                        self.cmd_stats()
-                        continue
-
-                if not user_input:
-                    continue
-
-                self._send_message(user_input)
-
-            except KeyboardInterrupt:
-                print("\n\nSaving before exit...")
-                save_chat_history(self.messages, self.context_file)
-                if self.memory_store:
-                    self.memory_store.close()
-                print("Goodbye!")
-                break
-            except Exception as e:
-                logger.error(f"Error in chat loop: {e}", exc_info=True)
-                print(f"\n❌ Error: {e}\n")
+                except KeyboardInterrupt:
+                    print("\n\nSaving before exit...")
+                    save_chat_history(self.messages, self.context_file)
+                    print("Goodbye!")
+                    break
+                except Exception as e:
+                    logger.error(f"Error in chat loop: {e}", exc_info=True)
+                    print(f"\n❌ Error: {e}\n")
+        finally:
+            if self.memory_store:
+                self.memory_store.close()

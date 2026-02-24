@@ -61,17 +61,8 @@ ALTER SEQUENCE memories_id_seq OWNER TO tsdbadmin;
 
 -- Vector similarity search using IVFFlat algorithm
 -- lists=100 is good for up to 100K memories, increase for larger datasets
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_indexes
-        WHERE schemaname = 'hermes' AND indexname = 'idx_memories_embedding'
-    ) THEN
-        CREATE INDEX idx_memories_embedding ON memories
-            USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
-        RAISE NOTICE 'Created index: idx_memories_embedding';
-    END IF;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_memories_embedding ON memories
+    USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
 CREATE INDEX IF NOT EXISTS idx_memories_tag ON memories(tag);

@@ -86,25 +86,14 @@ make run
 Goodbye!
 ```
 
-### Memory Commands
+### Memory Behavior
 
 ```bash
-# Store a memory
-/remember I prefer Python over JavaScript
-Type: preference
-Context: coding
-✓ Memory stored with ID 1
+# Ask naturally and memory writes happen automatically
+You: remember that I prefer Python over JavaScript for backend work
 
-# Search memories
-/recall programming preferences
-🔍 Found 1 relevant memories:
-  [1] PREFERENCE | coding
-      I prefer Python over JavaScript
-      Similarity: 0.923
-
-# View statistics
-/stats
-📊 Total memories: 42 | Contexts: 3 | Types: 4
+# Operator audit view
+/audit
 ```
 
 **Full command reference:** [docs/USER_GUIDE.md](docs/user-guides/project-overview.md)
@@ -168,8 +157,13 @@ hermes-agent/
 ├── config/
 │   └── template.yaml      # Model configuration
 ├── src/agent/
-│   ├── chat.py            # Chat interface
-│   └── memory.py          # Semantic memory
+│   └── chat_session.py    # Chat session orchestration
+├── src/interfaces/cli/
+│   └── chat.py            # CLI chat loop
+├── src/services/memory/
+│   ├── vector_store.py    # Semantic memory storage + recall
+│   ├── auto_writer.py     # Automatic memory persistence
+│   └── langmem_extractor.py # LangMem extraction pipeline
 ├── docs/                  # Documentation
 ├── schema/                # Database schema
 ├── tests/                 # Unit tests
@@ -207,6 +201,11 @@ OPENAI_API_KEY=sk-...
 MEMORY_DB_URL=postgresql://...
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_EMBEDDING_DIM=1536
+MEMORY_EVENTS_RETENTION_DAYS=90
+MEMORY_EVENTS_PRUNE_INTERVAL_SECONDS=3600
+LANGMEM_MODEL_PROVIDER=ollama
+# LANGMEM_MODEL defaults to current chat model when omitted
+LANGMEM_TEMPERATURE=0.2
 ```
 
 You can also override which template file the agent loads by setting `TEMPLATE_CONFIG` in your `.env` file. By default the app uses `config/template.yaml`.
@@ -220,8 +219,14 @@ ______________________________________________________________________
 ## Development
 
 ```bash
-# Run tests
+# Run all test flows by area
+make test-flows
+
+# Run full suite with coverage gate
 make test
+
+# Run formatter + linter + all test flows + coverage
+make ai-checks
 
 # View logs
 make logs
@@ -248,7 +253,7 @@ ______________________________________________________________________
 1. **Long-term** - Semantic memories in TimescaleDB
 
    - Vector embeddings for similarity search
-   - Organized by type and context
+   - Organized by type and tag
    - Persistent across conversations
 
 ### Memory Types

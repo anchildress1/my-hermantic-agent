@@ -36,6 +36,8 @@ def test_list_memories_no_filters(monkeypatch):
     assert results[0]["id"] == 1
     assert results[1]["id"] == 2
     mock_cursor.execute.assert_called_once()
+    sql_text = mock_cursor.execute.call_args[0][0]
+    assert "deleted_at IS NULL" in sql_text
     # Verify default limit=20, offset=0
     call_args = mock_cursor.execute.call_args[0]
     assert call_args[1] == [20, 0]

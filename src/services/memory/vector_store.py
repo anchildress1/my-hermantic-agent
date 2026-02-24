@@ -2,11 +2,11 @@ import os
 import logging
 import time
 from functools import lru_cache, wraps
-from typing import List, Dict, Optional, Tuple
+from typing import Any, List, Dict, Optional, Tuple
 
 import psycopg2
 from psycopg2 import pool
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, Json
 from openai import OpenAI, OpenAIError, RateLimitError, APITimeoutError
 from dotenv import load_dotenv
 
@@ -16,6 +16,18 @@ from src.core.config import Settings, get_settings
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+
+class MemoryRateLimitError(RuntimeError):
+    """Raised when in-process API rate limiting rejects a request."""
+
+
+class MemoryConnectionUnavailableError(ConnectionError):
+    """Raised when a pooled database connection cannot be acquired."""
+
+
+class MemoryEmbeddingError(RuntimeError):
+    """Raised when embedding generation fails."""
 
 
 def rate_limit(max_calls: int, period: float):
@@ -31,7 +43,7 @@ def rate_limit(max_calls: int, period: float):
 
             if len(calls) >= max_calls:
                 wait = period - (now - calls[0])
-                raise Exception(f"Rate limit exceeded. Wait {wait:.1f}s")
+                raise MemoryRateLimitError(f"Rate limit exceeded. Wait {wait:.1f}s")
 
             calls.append(now)
             return func(*args, **kwargs)
@@ -39,6 +51,10 @@ def rate_limit(max_calls: int, period: float):
         return wrapper
 
     return decorator
+
+
+class MemoryReconciliationError(ConnectionError):
+    """Raised when duplicate/tombstone reconciliation fails unexpectedly."""
 
 
 class MemoryStore:
@@ -56,6 +72,11 @@ class MemoryStore:
         "text-embedding-3-large": 3072,
         "text-embedding-ada-002": 1536,
     }
+    EVENT_SUCCESS = "success"
+    EVENT_ERROR = "error"
+    DUPLICATE_IMPORTANCE_BOOST = 0.1
+    DEFAULT_MEMORY_EVENTS_RETENTION_DAYS = 90
+    DEFAULT_EVENT_PRUNE_INTERVAL_SECONDS = 3600
 
     def __init__(self, settings: Optional[Settings] = None):
         """Initialize semantic memory store.
@@ -92,6 +113,7 @@ class MemoryStore:
             if settings
             else os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
         )
+        self._last_error: Optional[Dict] = None
 
         # Get embedding dimensions (auto-detect from model or use override)
         default_dim = self.EMBEDDING_DIMS.get(self.embedding_model, 1536)
@@ -100,6 +122,33 @@ class MemoryStore:
             if settings
             else int(os.getenv("OPENAI_EMBEDDING_DIM", str(default_dim)))
         )
+        self.memory_events_retention_days = self._resolve_positive_int(
+            value=(
+                settings.memory_events_retention_days
+                if settings
+                else int(
+                    os.getenv(
+                        "MEMORY_EVENTS_RETENTION_DAYS",
+                        str(self.DEFAULT_MEMORY_EVENTS_RETENTION_DAYS),
+                    )
+                )
+            ),
+            field_name="memory_events_retention_days",
+        )
+        self.event_prune_interval_seconds = self._resolve_positive_int(
+            value=(
+                settings.memory_events_prune_interval_seconds
+                if settings
+                else int(
+                    os.getenv(
+                        "MEMORY_EVENTS_PRUNE_INTERVAL_SECONDS",
+                        str(self.DEFAULT_EVENT_PRUNE_INTERVAL_SECONDS),
+                    )
+                )
+            ),
+            field_name="memory_events_prune_interval_seconds",
+        )
+        self._next_event_prune_monotonic = 0.0
 
         logger.info(
             f"Using embedding model: {self.embedding_model} ({self.embedding_dim} dimensions)"
@@ -121,7 +170,7 @@ class MemoryStore:
             conn = self.conn_pool.getconn()
             if conn:
                 return conn
-            raise Exception("Failed to get connection from pool")
+            raise MemoryConnectionUnavailableError("Failed to get connection from pool")
         except psycopg2.Error as e:
             logger.error(f"Database connection error: {e}")
             raise
@@ -130,6 +179,559 @@ class MemoryStore:
         """Return connection to pool."""
         if conn:
             self.conn_pool.putconn(conn)
+
+    def _set_last_error(
+        self, operation: str, error: Exception | str, details: Dict
+    ) -> None:
+        """Store the latest operation error for caller-level surfacing."""
+        self._last_error = {
+            "operation": operation,
+            "error": str(error),
+            "details": details,
+        }
+
+    def _clear_last_error(self) -> None:
+        """Clear latest operation error marker."""
+        self._last_error = None
+
+    def get_last_error(self) -> Optional[Dict]:
+        """Return latest operation error payload, if any."""
+        if self._last_error is None:
+            return None
+        return dict(self._last_error)
+
+    @staticmethod
+    def _preview(text: Optional[str], max_len: int = 200) -> str:
+        """Build a bounded text preview for logs/events."""
+        if not text:
+            return ""
+        return text[:max_len]
+
+    @staticmethod
+    def _resolve_positive_int(value: int, field_name: str) -> int:
+        """Validate positive integer configuration values."""
+        if value < 1:
+            raise ValueError(f"{field_name} must be greater than 0")
+        return value
+
+    @staticmethod
+    def _as_dict_row(row: Optional[Dict]) -> Optional[Dict]:
+        """Normalize cursor row payloads into plain dictionaries."""
+        if row is None:
+            return None
+        if isinstance(row, dict):
+            return dict(row)
+        try:
+            return dict(row)
+        except (TypeError, ValueError):
+            return None
+
+    def _raise_reconciliation_error(
+        self,
+        operation: str,
+        error: Exception,
+        details: Dict,
+        conn: Optional[object],
+    ) -> None:
+        """Record reconciliation failures and raise a typed exception."""
+        if conn and hasattr(conn, "rollback"):
+            conn.rollback()
+        self._set_last_error(
+            operation=operation,
+            error=error,
+            details=details,
+        )
+        raise MemoryReconciliationError(f"{operation} failed: {error}") from error
+
+    def _prune_events_with_connection(self, conn, retention_days: int) -> int:
+        """Delete audit events older than retention window.
+
+        Args:
+            conn: Active database connection.
+            retention_days: Maximum age (days) to retain.
+
+        Returns:
+            Count of deleted rows.
+        """
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM hermes.memory_events
+                WHERE created_at < NOW() - make_interval(days => %s)
+                """,
+                (retention_days,),
+            )
+            deleted = int(cur.rowcount)
+
+        if hasattr(conn, "commit"):
+            conn.commit()
+
+        return deleted
+
+    def _maybe_prune_events(self, conn) -> None:
+        """Run time-based memory-event pruning on a throttled schedule."""
+        now = time.monotonic()
+        if now < self._next_event_prune_monotonic:
+            return
+
+        self._next_event_prune_monotonic = now + self.event_prune_interval_seconds
+        try:
+            deleted = self._prune_events_with_connection(
+                conn=conn,
+                retention_days=self.memory_events_retention_days,
+            )
+            if deleted > 0:
+                logger.info(
+                    "Pruned %s memory_events rows older than %s days",
+                    deleted,
+                    self.memory_events_retention_days,
+                )
+        except Exception as e:  # pragma: no cover - audit retention is best effort
+            logger.warning("Skipping memory event pruning due to error: %s", e)
+            if hasattr(conn, "rollback"):
+                conn.rollback()
+
+    def prune_events(self, retention_days: Optional[int] = None) -> int:
+        """Prune old memory audit events using a time-based retention window.
+
+        Args:
+            retention_days: Retention window in days. Defaults to configured value.
+
+        Returns:
+            Number of pruned rows. Returns 0 on database failure.
+        """
+        days = self._resolve_positive_int(
+            value=(
+                self.memory_events_retention_days
+                if retention_days is None
+                else retention_days
+            ),
+            field_name="retention_days",
+        )
+
+        conn = None
+        try:
+            conn = self._get_connection()
+            return self._prune_events_with_connection(conn=conn, retention_days=days)
+        except psycopg2.Error as e:
+            logger.error("Database error pruning memory events: %s", e)
+            if conn and hasattr(conn, "rollback"):
+                conn.rollback()
+            return 0
+        except Exception as e:
+            logger.error("Unexpected error pruning memory events: %s", e)
+            if conn and hasattr(conn, "rollback"):
+                conn.rollback()
+            return 0
+        finally:
+            if conn:
+                self._return_connection(conn)
+
+    def _record_event(
+        self,
+        operation: str,
+        status: str,
+        details: Dict,
+        memory_id: Optional[int] = None,
+    ) -> None:
+        """Record a best-effort audit event.
+
+        Args:
+            operation: Operation name (remember, recall, forget, auto_remember, ...)
+            status: Event status ('success' or 'error')
+            details: Structured event metadata
+            memory_id: Optional referenced memory id
+        """
+        conn = None
+        try:
+            conn = self._get_connection()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO hermes.memory_events (memory_id, operation, status, details)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (memory_id, operation, status, Json(details)),
+                )
+                if hasattr(conn, "commit"):
+                    conn.commit()
+            self._maybe_prune_events(conn)
+        except Exception as e:  # pragma: no cover - audit should never break core flow
+            logger.warning(
+                "Skipping memory event recording due to error (operation=%s): %s",
+                operation,
+                e,
+            )
+            if conn and hasattr(conn, "rollback"):
+                conn.rollback()
+        finally:
+            if conn:
+                self._return_connection(conn)
+
+    def record_event(
+        self,
+        operation: str,
+        status: str,
+        details: Dict,
+        memory_id: Optional[int] = None,
+    ) -> None:
+        """Public wrapper for audit event creation."""
+        self._record_event(
+            operation=operation,
+            status=status,
+            details=details,
+            memory_id=memory_id,
+        )
+
+    def memory_exists(self, memory_text: str, type: str, context: str) -> bool:
+        """Check if the same memory already exists.
+
+        Args:
+            memory_text: Memory text to match exactly
+            type: Memory type
+            context: Memory tag/context
+
+        Returns:
+            True if matching memory row exists
+        """
+        conn = None
+        try:
+            conn = self._get_connection()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM hermes.memories
+                    WHERE memory_text = %s
+                      AND type = %s
+                      AND tag = %s
+                      AND deleted_at IS NULL
+                    LIMIT 1
+                    """,
+                    (memory_text, type, context),
+                )
+                return cur.fetchone() is not None
+        except Exception as e:
+            logger.warning(f"memory_exists check failed: {e}")
+            return False
+        finally:
+            if conn:
+                self._return_connection(conn)
+
+    def revive_exact_memory(
+        self,
+        memory_text: str,
+        type: str,
+        context: str,
+        importance_boost: float = DUPLICATE_IMPORTANCE_BOOST,
+    ) -> Optional[Dict]:
+        """Refresh an exact memory match instead of inserting a new row.
+
+        Args:
+            memory_text: Exact memory text to match.
+            type: Memory type.
+            context: Memory tag/context.
+            importance_boost: Importance increment for repeated evidence.
+
+        Returns:
+            Updated row payload when a match exists, otherwise None.
+        """
+        if importance_boost <= 0:
+            raise ValueError("importance_boost must be greater than 0")
+
+        conn = None
+        details = {
+            "memory_preview": self._preview(memory_text),
+            "type": type,
+            "context": context,
+            "importance_boost": importance_boost,
+        }
+        try:
+            conn = self._get_connection()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    UPDATE hermes.memories
+                    SET last_accessed = NOW(),
+                        access_count = access_count + 1,
+                        importance = LEAST(3.0, importance + %s)
+                    WHERE id = (
+                        SELECT id
+                        FROM hermes.memories
+                        WHERE memory_text = %s
+                          AND type = %s
+                          AND tag = %s
+                          AND deleted_at IS NULL
+                        ORDER BY id DESC
+                        LIMIT 1
+                    )
+                    RETURNING id, importance, access_count, last_accessed
+                    """,
+                    (importance_boost, memory_text, type, context),
+                )
+                row = cur.fetchone()
+                conn.commit()
+                self._clear_last_error()
+                return dict(row) if row else None
+        except psycopg2.Error as e:
+            logger.error(f"Database error reviving exact memory: {e}")
+            if conn:
+                conn.rollback()
+            self._set_last_error(
+                operation="revive_exact_memory",
+                error=e,
+                details=details,
+            )
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error reviving exact memory: {e}")
+            if conn:
+                conn.rollback()
+            self._set_last_error(
+                operation="revive_exact_memory",
+                error=e,
+                details=details,
+            )
+            return None
+        finally:
+            if conn:
+                self._return_connection(conn)
+
+    def merge_exact_memory(
+        self,
+        memory_text: str,
+        type: str,
+        context: str,
+        importance: float,
+        confidence: float,
+        source: Optional[str],
+    ) -> Optional[Dict]:
+        """Merge a new observation into an active exact-match memory row.
+
+        Args:
+            memory_text: Exact memory text to match.
+            type: Memory type.
+            context: Memory tag/context.
+            importance: Incoming importance score.
+            confidence: Incoming confidence score.
+            source: Optional latest source snippet.
+
+        Returns:
+            Updated row payload when a match exists, otherwise None.
+        """
+        conn = None
+        details = {
+            "memory_preview": self._preview(memory_text),
+            "type": type,
+            "context": context,
+            "importance": importance,
+            "confidence": confidence,
+            "source_preview": self._preview(source),
+        }
+        try:
+            conn = self._get_connection()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    UPDATE hermes.memories
+                    SET last_accessed = NOW(),
+                        access_count = access_count + 1,
+                        importance = LEAST(3.0, GREATEST(importance, %s)),
+                        confidence = GREATEST(confidence, %s),
+                        source = COALESCE(%s, source)
+                    WHERE id = (
+                        SELECT id
+                        FROM hermes.memories
+                        WHERE memory_text = %s
+                          AND type = %s
+                          AND tag = %s
+                          AND deleted_at IS NULL
+                        ORDER BY id DESC
+                        LIMIT 1
+                    )
+                    RETURNING id, importance, confidence, access_count, last_accessed
+                    """,
+                    (
+                        importance,
+                        confidence,
+                        source,
+                        memory_text,
+                        type,
+                        context,
+                    ),
+                )
+                row = self._as_dict_row(cur.fetchone())
+                conn.commit()
+                self._clear_last_error()
+                return row
+        except psycopg2.Error as e:
+            logger.error(f"Database error merging exact memory: {e}")
+            self._raise_reconciliation_error(
+                operation="merge_exact_memory",
+                error=e,
+                details=details,
+                conn=conn,
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error merging exact memory: {e}")
+            self._raise_reconciliation_error(
+                operation="merge_exact_memory",
+                error=e,
+                details=details,
+                conn=conn,
+            )
+        finally:
+            if conn:
+                self._return_connection(conn)
+
+    def revive_tombstoned_memory(
+        self,
+        memory_text: str,
+        type: str,
+        context: str,
+        importance: float,
+        confidence: float,
+        source: Optional[str],
+    ) -> Optional[Dict]:
+        """Revive a soft-deleted exact match and reconcile latest values.
+
+        Args:
+            memory_text: Exact memory text to match.
+            type: Memory type.
+            context: Memory tag/context.
+            importance: Incoming importance score.
+            confidence: Incoming confidence score.
+            source: Optional latest source snippet.
+
+        Returns:
+            Updated row payload when a tombstone is revived, otherwise None.
+        """
+        conn = None
+        details = {
+            "memory_preview": self._preview(memory_text),
+            "type": type,
+            "context": context,
+            "importance": importance,
+            "confidence": confidence,
+            "source_preview": self._preview(source),
+        }
+        try:
+            conn = self._get_connection()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    WITH candidate AS (
+                        SELECT id, deleted_at
+                        FROM hermes.memories
+                        WHERE memory_text = %s
+                          AND type = %s
+                          AND tag = %s
+                          AND deleted_at IS NOT NULL
+                        ORDER BY deleted_at DESC, id DESC
+                        LIMIT 1
+                    )
+                    UPDATE hermes.memories AS m
+                    SET deleted_at = NULL,
+                        last_accessed = NOW(),
+                        access_count = access_count + 1,
+                        importance = LEAST(3.0, GREATEST(m.importance, %s)),
+                        confidence = GREATEST(m.confidence, %s),
+                        source = COALESCE(%s, m.source)
+                    FROM candidate
+                    WHERE m.id = candidate.id
+                    RETURNING
+                        m.id,
+                        m.importance,
+                        m.confidence,
+                        m.access_count,
+                        m.last_accessed,
+                        candidate.deleted_at AS prior_deleted_at
+                    """,
+                    (
+                        memory_text,
+                        type,
+                        context,
+                        importance,
+                        confidence,
+                        source,
+                    ),
+                )
+                row = self._as_dict_row(cur.fetchone())
+                conn.commit()
+                self._clear_last_error()
+                return row
+        except psycopg2.Error as e:
+            logger.error(f"Database error reviving tombstoned memory: {e}")
+            self._raise_reconciliation_error(
+                operation="revive_tombstoned_memory",
+                error=e,
+                details=details,
+                conn=conn,
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error reviving tombstoned memory: {e}")
+            self._raise_reconciliation_error(
+                operation="revive_tombstoned_memory",
+                error=e,
+                details=details,
+                conn=conn,
+            )
+        finally:
+            if conn:
+                self._return_connection(conn)
+
+    def list_events(
+        self,
+        limit: int = 50,
+        operation: Optional[str] = None,
+        memory_id: Optional[int] = None,
+    ) -> List[Dict]:
+        """List recent memory audit events.
+
+        Args:
+            limit: Maximum number of rows to return (1-500)
+            operation: Optional operation filter
+            memory_id: Optional memory id filter
+
+        Returns:
+            Event dictionaries ordered by newest first
+        """
+        if limit < 1 or limit > 500:
+            raise ValueError("limit must be between 1 and 500")
+
+        conn = None
+        try:
+            conn = self._get_connection()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                sql = """
+                    SELECT id, memory_id, operation, status, details, created_at
+                    FROM hermes.memory_events
+                    WHERE 1=1
+                """
+                params: List = []
+
+                if operation:
+                    sql += " AND operation = %s"
+                    params.append(operation)
+
+                if memory_id is not None:
+                    sql += " AND memory_id = %s"
+                    params.append(memory_id)
+
+                sql += " ORDER BY created_at DESC LIMIT %s"
+                params.append(limit)
+
+                cur.execute(sql, params)
+                return [dict(row) for row in cur.fetchall()]
+        except psycopg2.Error as e:
+            logger.error(f"Database error listing memory events: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error listing memory events: {e}")
+            return []
+        finally:
+            if conn:
+                self._return_connection(conn)
 
     @lru_cache(maxsize=100)
     def _get_embedding_cached(self, text: str) -> Tuple[float, ...]:
@@ -155,16 +757,283 @@ class MemoryStore:
             return embedding
         except RateLimitError as e:
             logger.error(f"OpenAI rate limit exceeded: {e}")
-            raise Exception("OpenAI rate limit exceeded. Please try again later.")
+            raise MemoryEmbeddingError(
+                "OpenAI rate limit exceeded. Please try again later."
+            ) from e
         except APITimeoutError as e:
             logger.error(f"OpenAI API timeout: {e}")
-            raise Exception("Embedding generation timed out")
+            raise MemoryEmbeddingError("Embedding generation timed out") from e
         except OpenAIError as e:
             logger.error(f"OpenAI API error: {e}")
-            raise Exception(f"Failed to generate embedding: {e}")
+            raise MemoryEmbeddingError(f"Failed to generate embedding: {e}") from e
         except Exception as e:
             logger.error(f"Unexpected error generating embedding: {e}")
             raise
+
+    @staticmethod
+    def _resolve_context_alias(
+        context: Optional[str], tag: Optional[str]
+    ) -> Optional[str]:
+        """Resolve deprecated tag alias into context."""
+        if tag is not None and context is None:
+            return tag
+        return context
+
+    def _validate_remember_inputs(
+        self,
+        memory_text: str,
+        type: str,
+        context: Optional[str],
+        importance: float,
+        confidence: float,
+    ) -> None:
+        """Validate remember() input payload."""
+        if not memory_text or not memory_text.strip():
+            raise ValueError("memory_text cannot be empty")
+
+        if len(memory_text) > self.MAX_TEXT_LENGTH:
+            raise ValueError(f"memory_text too long (max {self.MAX_TEXT_LENGTH} chars)")
+
+        if type not in self.VALID_TYPES:
+            raise ValueError(f"type must be one of {self.VALID_TYPES}")
+
+        if not 0 <= confidence <= 1:
+            raise ValueError("confidence must be between 0 and 1")
+
+        if not 0 <= importance <= 3:
+            raise ValueError("importance must be between 0 and 3")
+
+        if not context or not context.strip():
+            raise ValueError("context cannot be empty")
+
+    def _record_remember_success(
+        self,
+        event_base: Dict,
+        memory_id: int,
+        action: str,
+        reconciliation: str,
+        extra_details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Record successful remember operation with normalized event shape."""
+        details: Dict[str, Any] = {
+            **event_base,
+            "memory_id": memory_id,
+            "action": action,
+            "reconciliation": reconciliation,
+        }
+        if extra_details:
+            details.update(extra_details)
+
+        self._record_event(
+            operation="remember",
+            status=self.EVENT_SUCCESS,
+            memory_id=memory_id,
+            details=details,
+        )
+        self._clear_last_error()
+
+    def _try_reconcile_remember(
+        self,
+        memory_text: str,
+        type: str,
+        context: str,
+        importance: float,
+        confidence: float,
+        source: Optional[str],
+        event_base: Dict,
+    ) -> Optional[int]:
+        """Try merge/revive paths before creating a new memory row."""
+        merged = self.merge_exact_memory(
+            memory_text=memory_text,
+            type=type,
+            context=context,
+            importance=importance,
+            confidence=confidence,
+            source=source,
+        )
+        if merged and "id" in merged:
+            memory_id = int(merged["id"])
+            self._record_remember_success(
+                event_base=event_base,
+                memory_id=memory_id,
+                action="merged_active",
+                reconciliation="merge",
+                extra_details={
+                    "new_importance": merged.get("importance"),
+                    "new_confidence": merged.get("confidence"),
+                    "access_count": merged.get("access_count"),
+                },
+            )
+            return memory_id
+
+        revived = self.revive_tombstoned_memory(
+            memory_text=memory_text,
+            type=type,
+            context=context,
+            importance=importance,
+            confidence=confidence,
+            source=source,
+        )
+        if revived and "id" in revived:
+            memory_id = int(revived["id"])
+            self._record_remember_success(
+                event_base=event_base,
+                memory_id=memory_id,
+                action="revived_tombstone",
+                reconciliation="update",
+                extra_details={
+                    "prior_deleted_at": revived.get("prior_deleted_at"),
+                    "new_importance": revived.get("importance"),
+                    "new_confidence": revived.get("confidence"),
+                    "access_count": revived.get("access_count"),
+                },
+            )
+            return memory_id
+
+        return None
+
+    def _insert_memory(
+        self,
+        conn: Any,
+        memory_text: str,
+        type: str,
+        context: str,
+        importance: float,
+        confidence: float,
+        source: Optional[str],
+        embedding: List[float],
+    ) -> int:
+        """Insert a new memory row and return its id."""
+        with conn.cursor() as cur:
+            cur.execute("SET ivfflat.probes = 20")
+            cur.execute(
+                """
+                INSERT INTO hermes.memories
+                (memory_text, type, tag, importance, confidence, source, embedding, embedding_model, embedding_dim)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """,
+                (
+                    memory_text,
+                    type,
+                    context,
+                    importance,
+                    confidence,
+                    source,
+                    embedding,
+                    self.embedding_model,
+                    self.embedding_dim,
+                ),
+            )
+            memory_id = int(cur.fetchone()[0])
+            conn.commit()
+            return memory_id
+
+    def _record_remember_error(
+        self,
+        event_base: Dict,
+        error: Exception,
+        error_type: str,
+        rollback_conn: Optional[Any] = None,
+    ) -> None:
+        """Store and emit normalized remember() failure event."""
+        if rollback_conn and hasattr(rollback_conn, "rollback"):
+            rollback_conn.rollback()
+
+        self._set_last_error(
+            operation="remember",
+            error=error,
+            details=event_base,
+        )
+        self._record_event(
+            operation="remember",
+            status=self.EVENT_ERROR,
+            details={**event_base, "error": str(error), "error_type": error_type},
+        )
+
+    @staticmethod
+    def _is_reconciliation_error(error: Exception) -> bool:
+        """Detect reconciliation errors across module reload boundaries in tests."""
+        return isinstance(error, MemoryReconciliationError) or (
+            error.__class__.__name__ == "MemoryReconciliationError"
+        )
+
+    def _validate_recall_inputs(
+        self, query: str, type: Optional[str], limit: int
+    ) -> None:
+        """Validate recall() input payload."""
+        if not query or not query.strip():
+            raise ValueError("query cannot be empty")
+
+        if type and type not in self.VALID_TYPES:
+            raise ValueError(f"type must be one of {self.VALID_TYPES}")
+
+        if limit < 1 or limit > 100:
+            raise ValueError("limit must be between 1 and 100")
+
+    def _build_recall_query(
+        self,
+        query: str,
+        query_embedding: Optional[List[float]],
+        type: Optional[str],
+        context: Optional[str],
+        min_importance: Optional[float],
+        limit: int,
+    ) -> tuple[str, List[Any]]:
+        """Build recall SQL + parameters for semantic or full-text mode."""
+        if query_embedding is not None:
+            sql = """
+                SELECT
+                    id, memory_text, type, tag, importance, confidence,
+                    source, created_at, last_accessed, access_count,
+                    embedding_model,
+                    (1 - (embedding <=> %s::vector)) * (1 + (importance / 3.0)) as similarity
+                FROM hermes.memories
+                WHERE deleted_at IS NULL
+            """
+            params: List[Any] = [query_embedding]
+        else:
+            sql = """
+                SELECT
+                    id, memory_text, type, tag, importance, confidence,
+                    source, created_at, last_accessed, access_count,
+                    embedding_model,
+                    ts_rank(to_tsvector('english', memory_text), plainto_tsquery('english', %s)) * (1 + (importance / 3.0)) as similarity
+                FROM hermes.memories
+                WHERE to_tsvector('english', memory_text) @@ plainto_tsquery('english', %s)
+                  AND deleted_at IS NULL
+            """
+            params = [query, query]
+
+        if type:
+            sql += " AND type = %s"
+            params.append(type)
+
+        if context:
+            sql += " AND tag LIKE %s" if "%" in context else " AND tag = %s"
+            params.append(context)
+
+        if min_importance is not None:
+            sql += " AND importance >= %s"
+            params.append(min_importance)
+
+        sql += " ORDER BY similarity DESC LIMIT %s"
+        params.append(limit)
+        return sql, params
+
+    def _touch_recalled_memories(self, cur: Any, results: List[Dict]) -> None:
+        """Update access fields for recalled rows."""
+        if not results:
+            return
+        memory_ids = [row["id"] for row in results]
+        cur.execute(
+            """
+            UPDATE hermes.memories
+            SET last_accessed = NOW(), access_count = access_count + 1
+            WHERE id = ANY(%s) AND deleted_at IS NULL
+        """,
+            (memory_ids,),
+        )
 
     @rate_limit(max_calls=10, period=60.0)
     def remember(
@@ -192,82 +1061,120 @@ class MemoryStore:
         Returns:
             Memory ID on success, None on failure
         """
-        if tag is not None and context is None:
-            context = tag
+        context = self._resolve_context_alias(context=context, tag=tag)
+        event_base = {
+            "type": type,
+            "context": context,
+            "importance": importance,
+            "confidence": confidence,
+            "source_preview": self._preview(source),
+            "memory_preview": self._preview(memory_text),
+        }
 
-        # Input validation
-        if not memory_text or not memory_text.strip():
-            raise ValueError("memory_text cannot be empty")
-
-        if len(memory_text) > self.MAX_TEXT_LENGTH:
-            raise ValueError(f"memory_text too long (max {self.MAX_TEXT_LENGTH} chars)")
-
-        if type not in self.VALID_TYPES:
-            raise ValueError(f"type must be one of {self.VALID_TYPES}")
-
-        if not 0 <= confidence <= 1:
-            raise ValueError("confidence must be between 0 and 1")
-
-        if not 0 <= importance <= 3:
-            raise ValueError("importance must be between 0 and 3")
-
-        if not context or not context.strip():
-            raise ValueError("context cannot be empty")
+        self._validate_remember_inputs(
+            memory_text=memory_text,
+            type=type,
+            context=context,
+            importance=importance,
+            confidence=confidence,
+        )
 
         conn = None
         try:
+            reconciled_id = self._try_reconcile_remember(
+                memory_text=memory_text,
+                type=type,
+                context=context,
+                importance=importance,
+                confidence=confidence,
+                source=source,
+                event_base=event_base,
+            )
+            if reconciled_id is not None:
+                return reconciled_id
+
             embedding = self._get_embedding(memory_text)
             logger.debug(
                 f"Generated embedding for storage: text_length={len(memory_text)}, embedding_dims={len(embedding)}, type={type}, tag={tag}"
             )
 
             conn = self._get_connection()
-
-            with conn.cursor() as cur:
-                cur.execute("SET ivfflat.probes = 20")
-
-                cur.execute(
-                    """
-                    INSERT INTO hermes.memories
-                    (memory_text, type, tag, importance, confidence, source, embedding, embedding_model, embedding_dim)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id
-                """,
-                    (
-                        memory_text,
-                        type,
-                        context,
-                        importance,
-                        confidence,
-                        source,
-                        embedding,
-                        self.embedding_model,
-                        self.embedding_dim,
-                    ),
-                )
-
-                memory_id = cur.fetchone()[0]
-                conn.commit()
-
-                logger.info(f"Stored memory {memory_id}: {memory_text[:50]}...")
-                logger.debug(
-                    f"Database insert confirmed: id={memory_id}, type={type}, tag={context}, confidence={confidence}, embedding_model={self.embedding_model}"
-                )
-
-                return memory_id
+            memory_id = self._insert_memory(
+                conn=conn,
+                memory_text=memory_text,
+                type=type,
+                context=context,
+                importance=importance,
+                confidence=confidence,
+                source=source,
+                embedding=embedding,
+            )
+            logger.info(f"Stored memory {memory_id}: {memory_text[:50]}...")
+            logger.debug(
+                f"Database insert confirmed: id={memory_id}, type={type}, tag={context}, confidence={confidence}, embedding_model={self.embedding_model}"
+            )
+            self._record_remember_success(
+                event_base=event_base,
+                memory_id=memory_id,
+                action="insert_new",
+                reconciliation="insert",
+                extra_details={
+                    "embedding_model": self.embedding_model,
+                    "embedding_dim": self.embedding_dim,
+                },
+            )
+            return memory_id
 
         except psycopg2.OperationalError as e:
             logger.error(f"Database connection failed: {e}")
+            self._record_remember_error(
+                event_base=event_base,
+                error=e,
+                error_type="OperationalError",
+                rollback_conn=conn,
+            )
             return None
         except psycopg2.Error as e:
             logger.error(f"Database error storing memory: {e}")
-            if conn:
-                conn.rollback()
+            self._record_remember_error(
+                event_base=event_base,
+                error=e,
+                error_type="DatabaseError",
+                rollback_conn=conn,
+            )
             return None
         except Exception as e:
+            if self._is_reconciliation_error(e):
+                logger.error(f"Memory reconciliation failed before insert: {e}")
+                last_error = self.get_last_error() or {}
+                self._set_last_error(
+                    operation="remember",
+                    error=e,
+                    details={
+                        **event_base,
+                        "failed_operation": last_error.get("operation"),
+                        "reconciliation_error": last_error.get("error"),
+                    },
+                )
+                self._record_event(
+                    operation="remember",
+                    status=self.EVENT_ERROR,
+                    details={
+                        **event_base,
+                        "error": str(e),
+                        "error_type": "ReconciliationError",
+                        "failed_operation": last_error.get("operation"),
+                    },
+                )
+                return None
+
             logger.error(f"Unexpected error storing memory: {e}")
-            if conn:
-                conn.rollback()
+            self._record_remember_error(
+                event_base=event_base,
+                error=e,
+                error_type=e.__class__.__name__,
+                rollback_conn=conn,
+            )
             return None
         finally:
             if conn:
@@ -299,133 +1206,236 @@ class MemoryStore:
         Returns:
             List of memory dicts with similarity scores
         """
-        if tag is not None and context is None:
-            context = tag
-
-        # Input validation
-        if not query or not query.strip():
-            raise ValueError("query cannot be empty")
-
-        if type and type not in self.VALID_TYPES:
-            raise ValueError(f"type must be one of {self.VALID_TYPES}")
-
-        if limit < 1 or limit > 100:
-            raise ValueError("limit must be between 1 and 100")
+        context = self._resolve_context_alias(context=context, tag=tag)
+        self._validate_recall_inputs(query=query, type=type, limit=limit)
 
         conn = None
+        event_base = {
+            "query_preview": self._preview(query),
+            "type": type,
+            "context": context,
+            "min_importance": min_importance,
+            "limit": limit,
+            "use_semantic": use_semantic,
+        }
         try:
+            query_embedding: Optional[List[float]] = None
+            if use_semantic:
+                query_embedding = self._get_embedding(query)
+                logger.debug(
+                    "Semantic search: query_length=%s, query_preview=%s..., embedding_dims=%s",
+                    len(query),
+                    query[:50],
+                    len(query_embedding),
+                )
+
             conn = self._get_connection()
 
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("SET ivfflat.probes = 20")
-
-                if use_semantic:
-                    query_embedding = self._get_embedding(query)
-                    logger.debug(
-                        f"Semantic search: query_length={len(query)}, query_preview={query[:50]}..., embedding_dims={len(query_embedding)}"
-                    )
-
-                    sql = """
-                        SELECT
-                            id, memory_text, type, tag, importance, confidence,
-                            source, created_at, last_accessed, access_count,
-                            embedding_model,
-                            (1 - (embedding <=> %s::vector)) * (1 + (importance / 3.0)) as similarity
-                        FROM hermes.memories
-                        WHERE 1=1
-                    """
-                    params = [query_embedding]
-                else:
-                    sql = """
-                        SELECT
-                            id, memory_text, type, tag, importance, confidence,
-                            source, created_at, last_accessed, access_count,
-                            embedding_model,
-                            ts_rank(to_tsvector('english', memory_text), plainto_tsquery('english', %s)) * (1 + (importance / 3.0)) as similarity
-                        FROM hermes.memories
-                        WHERE to_tsvector('english', memory_text) @@ plainto_tsquery('english', %s)
-                    """
-                    params = [query, query]
-
-                if type:
-                    sql += " AND type = %s"
-                    params.append(type)
-
-                if context:
-                    if "%" in context:
-                        sql += " AND tag LIKE %s"
-                    else:
-                        sql += " AND tag = %s"
-                    params.append(context)
-
-                if min_importance is not None:
-                    sql += " AND importance >= %s"
-                    params.append(min_importance)
-
-                sql += " ORDER BY similarity DESC LIMIT %s"
-                params.append(limit)
-
+                sql, params = self._build_recall_query(
+                    query=query,
+                    query_embedding=query_embedding,
+                    type=type,
+                    context=context,
+                    min_importance=min_importance,
+                    limit=limit,
+                )
                 cur.execute(sql, params)
                 results = cur.fetchall()
-
-                # Update access tracking for returned memories
+                self._touch_recalled_memories(cur=cur, results=results)
                 if results:
-                    memory_ids = [r["id"] for r in results]
-                    cur.execute(
-                        """
-                        UPDATE hermes.memories
-                        SET last_accessed = NOW(), access_count = access_count + 1
-                        WHERE id = ANY(%s)
-                    """,
-                        (memory_ids,),
-                    )
                     conn.commit()
 
                 logger.info(
                     f"Recalled {len(results)} memories for query: {query[:50]}..."
                 )
-                return [dict(r) for r in results]
+                self._record_event(
+                    operation="recall",
+                    status=self.EVENT_SUCCESS,
+                    details={
+                        **event_base,
+                        "result_count": len(results),
+                        "memory_ids": [row["id"] for row in results],
+                    },
+                )
+                return [dict(row) for row in results]
 
         except psycopg2.OperationalError as e:
             logger.error(f"Database connection failed: {e}")
+            self._record_event(
+                operation="recall",
+                status=self.EVENT_ERROR,
+                details={
+                    **event_base,
+                    "error": str(e),
+                    "error_type": "OperationalError",
+                },
+            )
             return []
         except psycopg2.Error as e:
             logger.error(f"Database error recalling memories: {e}")
+            self._record_event(
+                operation="recall",
+                status=self.EVENT_ERROR,
+                details={**event_base, "error": str(e), "error_type": "DatabaseError"},
+            )
             return []
         except Exception as e:
             logger.error(f"Unexpected error recalling memories: {e}")
+            self._record_event(
+                operation="recall",
+                status=self.EVENT_ERROR,
+                details={
+                    **event_base,
+                    "error": str(e),
+                    "error_type": e.__class__.__name__,
+                },
+            )
             return []
         finally:
             if conn:
                 self._return_connection(conn)
 
     def forget(self, memory_id: int) -> bool:
-        """Delete a memory by ID."""
+        """Soft-delete a memory by ID."""
         conn = None
         try:
             conn = self._get_connection()
-            with conn.cursor() as cur:
-                cur.execute("DELETE FROM hermes.memories WHERE id = %s", (memory_id,))
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                tombstoned_row = self._tombstone_memory_row(
+                    cur=cur, memory_id=memory_id
+                )
+                deleted = tombstoned_row is not None
                 conn.commit()
-                deleted = cur.rowcount > 0
-                if deleted:
-                    logger.info(f"Deleted memory {memory_id}")
-                else:
-                    logger.warning(f"Memory {memory_id} not found")
+
+                existing_row = None
+                if not deleted:
+                    existing_row = self._fetch_memory_row(cur=cur, memory_id=memory_id)
+
+                event_memory_id, event_details = self._build_forget_event_details(
+                    memory_id=memory_id,
+                    tombstoned_row=tombstoned_row,
+                    existing_row=existing_row,
+                )
+                self._record_event(
+                    operation="forget",
+                    status=self.EVENT_SUCCESS,
+                    memory_id=event_memory_id,
+                    details=event_details,
+                )
                 return deleted
         except psycopg2.Error as e:
             logger.error(f"Database error deleting memory: {e}")
             if conn:
                 conn.rollback()
+            self._record_event(
+                operation="forget",
+                status=self.EVENT_ERROR,
+                memory_id=memory_id,
+                details={
+                    "memory_id": memory_id,
+                    "error": str(e),
+                    "error_type": "DatabaseError",
+                },
+            )
             return False
         except Exception as e:
             logger.error(f"Unexpected error deleting memory: {e}")
             if conn:
                 conn.rollback()
+            self._record_event(
+                operation="forget",
+                status=self.EVENT_ERROR,
+                memory_id=memory_id,
+                details={
+                    "memory_id": memory_id,
+                    "error": str(e),
+                    "error_type": e.__class__.__name__,
+                },
+            )
             return False
         finally:
             if conn:
                 self._return_connection(conn)
+
+    def _tombstone_memory_row(self, cur: Any, memory_id: int) -> Optional[Dict]:
+        """Tombstone a memory row and return the updated payload."""
+        cur.execute(
+            """
+            UPDATE hermes.memories
+            SET deleted_at = NOW()
+            WHERE id = %s AND deleted_at IS NULL
+            RETURNING id, memory_text, type, tag, deleted_at
+            """,
+            (memory_id,),
+        )
+        return self._as_dict_row(cur.fetchone())
+
+    def _fetch_memory_row(self, cur: Any, memory_id: int) -> Optional[Dict]:
+        """Fetch memory row state when tombstoning did not update anything."""
+        cur.execute(
+            """
+            SELECT id, memory_text, type, tag, deleted_at
+            FROM hermes.memories
+            WHERE id = %s
+            """,
+            (memory_id,),
+        )
+        return self._as_dict_row(cur.fetchone())
+
+    def _build_forget_event_details(
+        self,
+        memory_id: int,
+        tombstoned_row: Optional[Dict],
+        existing_row: Optional[Dict],
+    ) -> Tuple[Optional[int], Dict[str, Any]]:
+        """Build event metadata for forget() outcomes."""
+        if tombstoned_row:
+            logger.info(f"Soft-deleted memory {memory_id}")
+            return (
+                memory_id,
+                {
+                    "memory_id": memory_id,
+                    "deleted": True,
+                    "mode": "soft_delete",
+                    "action": "tombstone_created",
+                    "reconciliation": "delete",
+                    "memory_preview": self._preview(tombstoned_row.get("memory_text")),
+                    "type": tombstoned_row.get("type"),
+                    "context": tombstoned_row.get("tag"),
+                    "deleted_at": tombstoned_row.get("deleted_at"),
+                },
+            )
+
+        if existing_row and existing_row.get("deleted_at"):
+            logger.info(f"Memory {memory_id} is already tombstoned")
+            return (
+                memory_id,
+                {
+                    "memory_id": memory_id,
+                    "deleted": False,
+                    "mode": "soft_delete",
+                    "action": "already_tombstoned",
+                    "reconciliation": "delete",
+                    "memory_preview": self._preview(existing_row.get("memory_text")),
+                    "type": existing_row.get("type"),
+                    "context": existing_row.get("tag"),
+                    "deleted_at": existing_row.get("deleted_at"),
+                },
+            )
+
+        logger.warning(f"Memory {memory_id} not found")
+        return (
+            None,
+            {
+                "memory_id": memory_id,
+                "deleted": False,
+                "mode": "soft_delete",
+                "action": "not_found",
+                "reconciliation": "delete",
+            },
+        )
 
     def list_memories(
         self,
@@ -464,7 +1474,7 @@ class MemoryStore:
                         source, created_at, last_accessed, access_count,
                         embedding_model
                     FROM hermes.memories
-                    WHERE 1=1
+                    WHERE deleted_at IS NULL
                 """
                 params = []
 
@@ -506,7 +1516,14 @@ class MemoryStore:
         try:
             conn = self._get_connection()
             with conn.cursor() as cur:
-                cur.execute("SELECT DISTINCT tag FROM hermes.memories ORDER BY tag")
+                cur.execute(
+                    """
+                    SELECT DISTINCT tag
+                    FROM hermes.memories
+                    WHERE deleted_at IS NULL
+                    ORDER BY tag
+                    """
+                )
                 tags = [row[0] for row in cur.fetchall()]
                 logger.debug(f"Found {len(tags)} unique tags")
                 return tags
@@ -536,6 +1553,7 @@ class MemoryStore:
                         AVG(importance) as avg_importance,
                         MAX(created_at) as last_memory_at
                     FROM hermes.memories
+                    WHERE deleted_at IS NULL
                 """)
                 stats = dict(cur.fetchone())
 
@@ -543,6 +1561,7 @@ class MemoryStore:
                 cur.execute("""
                     SELECT type, COUNT(*) as count 
                     FROM hermes.memories 
+                    WHERE deleted_at IS NULL
                     GROUP BY type
                 """)
                 type_counts = {row["type"]: row["count"] for row in cur.fetchall()}

@@ -2,6 +2,11 @@
 
 This document defines the coding standards, architectural patterns, and context for AI assistants (GitHub Copilot, Claude, Cursor, etc.) working on the **Hermantic Agent** repository.
 
+## Terminology Guardrail
+
+- `AGENTS.md` captures assistant-facing repository instructions (what Codex should remember about working in this repo).
+- User-facing product behavior docs stay under `docs/` (for example, `docs/agent-memory.md` describes the app's memory system behavior).
+
 ## 1. Project Identity
 
 - **Name:** My Hermantic Agent

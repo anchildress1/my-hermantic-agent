@@ -1,17 +1,22 @@
 import logging
+from typing import Callable, Optional
+
 from src.services.memory.vector_store import MemoryStore
 
 logger = logging.getLogger(__name__)
 
 
-def create_store_memory_tool(memory_store: MemoryStore):
+def create_store_memory_tool(
+    memory_store: Optional[MemoryStore],
+) -> Callable[[str, str, str, float, float], str]:
     """Create the store_memory_tool function bound to a memory store."""
 
     def store_memory_tool(
         memory_text: str,
-        type: str,
+        type: str = "fact",
+        tag: str = "chat",
         importance: float = 1.0,
-        confidence: float = 0.0,
+        confidence: float = 0.8,
     ) -> str:
         """
         Store a semantic memory in the database.
@@ -19,6 +24,7 @@ def create_store_memory_tool(memory_store: MemoryStore):
         Args:
             memory_text: Concise description of what to remember
             type: Memory type (preference, fact, task, insight)
+            tag: Memory tag/context
             importance: Importance score 0.0-3.0 (0=low, 1=normal, 2=high, 3=critical)
             confidence: Confidence score 0.0-1.0
 
@@ -32,7 +38,7 @@ def create_store_memory_tool(memory_store: MemoryStore):
             memory_id = memory_store.remember(
                 memory_text=memory_text,
                 type=type,
-                context="chat",  # Default context
+                context=tag,
                 importance=importance,
                 confidence=confidence,
             )

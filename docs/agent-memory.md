@@ -1,290 +1,100 @@
-# Memory System Chat Commands
+# Memory System (Implementation Truth)
 
-Agent memory system providing semantic storage and retrieval via chat interface.
+This document describes the memory system as implemented in code.
 
-## Terminology
+## Scope
 
-- **MEMORY** (cloud PostgreSQL): Semantic embeddings in TimescaleDB managed by `/remember`, `/recall`, `/forget`
+- Single global user.
+- Durable semantic memory in TigerData/PostgreSQL.
+- OpenAI embeddings for semantic storage/recall.
+- Automatic memory writing via LangMem extraction.
+- Auditable memory operations through `hermes.memory_events`.
 
-Memory commands interact exclusively with the cloud database.
+## Data Model
 
-## Architecture
+### `hermes.memories`
 
-```mermaid
-%%{init: {'theme': 'neutral'}}%%
-flowchart TB
-    User[User Chat Input] -->|command| Agent[Chat Agent]
-    Agent -->|parse command| Parser{Command Type}
+- Long-term semantic memories.
+- Core fields: `memory_text`, `type`, `tag`, `importance`, `confidence`, `source`, `embedding`.
+- Embedding column is currently `vector(1536)`.
 
-    Parser -->|/remember| Remember[Remember Handler]
-    Parser -->|/recall| Recall[Recall Handler]
-    Parser -->|/forget| Forget[Forget Handler]
-    Parser -->|/memories| List[List Handler]
-    Parser -->|/tags| Tags[Tag List Handler]
-    Parser -->|/stats| Stats[Stats Handler]
+### `hermes.memory_events`
 
-    Remember -->|text| OpenAI[OpenAI Embeddings API]
-    Recall -->|query| OpenAI
+- Audit trail for memory operations.
+- Core fields: `memory_id`, `operation`, `status`, `details`, `created_at`.
+- Time-based retention is enforced by pruning events older than `MEMORY_EVENTS_RETENTION_DAYS` (default `90`).
+- Operations currently include:
+  - `remember`
+  - `recall`
+  - `forget`
+  - `auto_remember`
 
-    OpenAI -->|vector| Store[MemoryStore]
-    Forget -->|id| Store
-    List -->|filter| Store
-    Contexts -->|query| Store
-    Stats -->|aggregate| Store
+## Runtime Components
 
-    Store -->|SQL + pgvector| DB[(TimescaleDB + pgvector)]
+- `src/services/memory/vector_store.py`
+  - DB reads/writes for memories.
+  - Embedding generation via OpenAI.
+  - Audit event creation for memory operations.
+- `src/services/memory/langmem_extractor.py`
+  - LangMem + LangChain extraction of structured memory candidates.
+  - Relevance-focused settings:
+    - inserts only
+    - updates disabled
+    - deletes disabled
+- `src/services/memory/auto_writer.py`
+  - Turn-level automatic memory writing.
+  - Duplicate check before insert.
 
-    DB -->|results| Store
-    Store -->|formatted| Agent
-    Agent -->|response| User
+## CLI Commands
 
-    style User stroke:#333,stroke-width:2px
-    style Agent stroke:#333,stroke-width:2px
-    style OpenAI stroke:#333,stroke-width:1px
-    style DB stroke:#333,stroke-width:2px
-```
+When semantic memory is enabled:
 
-## Quick Reference
+- Memory writes and recall behavior are driven through normal conversation.
+- The agent should call memory tools automatically when appropriate.
+- `/audit [operation]` is available as an operator view for event history.
 
-```bash
-# Store memory
-/remember type=preference tag=coding User prefers Python
+## Automatic Memory Writing
 
-# Search memories
-/recall programming preferences
+- Runs on normal user/assistant turns.
+- Extracts memory candidates from latest turn.
+- Inserts new memories and revives exact duplicates (refreshes access metadata and bumps importance slightly).
+- Emits `auto_remember` audit events for successful auto writes.
+- Surfaces failed write attempts in chat output with the attempted memory text and exact DB error.
+- Explicit user remember intent (messages containing "remember") is boosted to high importance automatically.
 
-# Delete memory
-/forget 42
+## Tombstone Lifecycle Policy
 
-# List memories by tag
-/memories work
+- Exact duplicate remembers reconcile before insert:
+  - merge into active match (`action=merged_active`)
+  - revive soft-deleted match (`action=revived_tombstone`)
+  - insert only when no exact match exists (`action=insert_new`)
+- Forget operations are fully auditable with lifecycle actions:
+  - `action=tombstone_created`
+  - `action=already_tombstoned`
+  - `action=not_found`
 
-# Show all tags
-/tags
+## Relevance Notes
 
-# View statistics
-/stats
-```
+- LangMem extraction is configured for relevance-first behavior:
+  - model provider defaults to local `ollama` (overrideable via env).
+  - model defaults to the active chat model when `LANGMEM_MODEL` is not set.
+  - temperature is configurable and defaults to `0.2`.
+  - only inserts are allowed in extractor decisions.
+- Memory writes are model-mediated with policy gates (duplicate checks, explicit remember priority boost).
+- Relevance regressions are guarded by fixture-based tolerance tests in `tests/services/memory/fixtures/relevance_regression.json`.
 
-## Commands
+## Current Limits
 
-### /remember
+- Embedding dimension mismatch is still possible if model/env changes away from 1536 without schema migration.
+- Memory deletion path is soft delete (`deleted_at`), preserving historical auditability.
+- `memory_events` audit records are retained by age only (no actor/session partitioning yet).
 
-Store a new memory in the semantic database.
+## Setup
 
-**Syntax:**
-
-```bash
-/remember [type=<type>] [tag=<tag>] [importance=<float>] [confidence=<float>] [source=<src>] <text>
-```
-
-**Interactive Mode:**
-If `type` or `tag` are omitted, the agent prompts for them.
-
-**Parameters:**
-
-- `type`: Memory type (preference, fact, task, insight)
-- `tag`: Tag for organization (e.g., work, personal, project-name)
-- `importance`: Importance score 0.0-3.0 (0=low, 1=normal, 2=high, 3=critical; default: 1.0)
-- `confidence`: Confidence score 0.0-1.0 (default: 1.0)
-- `source`: Source snippet (optional)
-- `text`: Memory content (1-8000 chars)
-
-**Importance Levels:**
-
-- `0.0-1.0`: Low priority, background info
-- `1.0-2.0`: Normal priority, standard memories
-- `2.0-3.0`: High priority, critical memories (user must inistantiate)
-
-**Examples:**
+Run migrations:
 
 ```bash
-/remember type=preference tag=coding User prefers tabs over spaces
-/remember type=task tag=work importance=2.5 Review PR #456 before Friday
+make setup-db
 ```
 
-**Constraints:**
-
-- Rate limit: 10 calls/minute
-- Returns memory ID on success
-- High importance (>2.0) shows warning and boosts recall priority
-
-### /recall
-
-Search semantic memories using vector similarity.
-
-**Syntax:**
-
-```bash
-/recall <query>
-```
-
-**Behavior:**
-
-- Generates embedding for query
-- Searches using cosine similarity weighted by importance: `similarity * (1 + importance/3)`
-- Returns top 5 most relevant memories (high-importance memories ranked higher)
-- Updates access tracking (last_accessed, access_count)
-
-**Output:**
-
-```
-[ID] TYPE       | TAG                  🟢/🟡/🔴
-     Memory text
-     Score: 0.XXX | Importance: X.X | Accessed: Nx
-```
-
-Importance indicators:
-
-- 🟢 Low (0-1.0)
-- 🟡 Normal (1.0-2.0)
-- 🔴 High (2.0-3.0)
-
-**Constraints:**
-
-- Rate limit: 20 calls/minute
-
-### /memories
-
-List recent memories, optionally filtered by tag.
-
-**Syntax:**
-
-```bash
-/memories [tag]
-```
-
-**Behavior:**
-
-- No argument: Shows overall statistics
-- With tag: Lists memories matching exact tag
-- Limit: 10 results
-
-**Examples:**
-
-```bash
-/memories              # Show stats
-/memories work        # List work tag memories
-```
-
-### /forget
-
-Delete a memory by ID.
-
-**Syntax:**
-
-```bash
-/forget <id>
-```
-
-**Example:**
-
-```bash
-/forget 42
-```
-
-### /tags
-
-List all unique tags in the database.
-
-**Syntax:**
-
-```bash
-/tags
-```
-
-**Output:**
-
-```
-Available tags (N):
-  • coding
-  • work
-  • personal
-```
-
-### /stats
-
-Display memory statistics.
-
-**Syntax:**
-
-```bash
-/stats
-```
-
-**Output:**
-
-```
-Memory Statistics:
-  Total memories:   42
-  Unique types:     4
-  Unique tags:      3
-  Avg importance:   1.25
-  Avg confidence:   0.95
-  Last memory:      2025-12-09T10:30:00
-```
-
-## Memory Types
-
-- **preference**: User likes/dislikes ("prefers dark mode")
-- **fact**: Factual info ("Python 3.12 released Oct 2023")
-- **task**: Todos ("review PR #456")
-- **insight**: Observations ("most productive in morning")
-
-## Error Handling
-
-All methods handle errors gracefully:
-
-- Database errors → None/empty list/False
-- API errors → Retry on rate limit, raise on timeout
-- Validation errors → Raise ValueError
-- Check `logs/ollama_chat.log` for details
-
-## Usage Examples
-
-### Storing Preferences
-
-```bash
-💬 You: /remember type=preference tag=coding Prefers dark mode with high contrast
-✓ Memory stored with ID 15
-```
-
-### Recalling Information
-
-```bash
-💬 You: /recall coding preferences
-
-🔍 Found 2 relevant memories:
-
-  [15] PREFERENCE | coding
-       Prefers dark mode with high contrast
-       Similarity: 0.892 | Accessed: 1 times
-
-  [8]  PREFERENCE | coding
-       Uses Python 3.12 for all new projects
-       Similarity: 0.654 | Accessed: 3 times
-```
-
-### Managing Tasks
-
-```bash
-💬 You: /remember type=task tag=work Review PR #456 before Friday
-✓ Memory stored with ID 23
-
-💬 You: /memories work
-
-📋 Memories with tag 'work':
-
-  [23] TASK
-       Review PR #456 before Friday...
-
-💬 You: /forget 23
-✓ Memory 23 deleted
-```
-
-## Troubleshooting
-
-- **"MEMORY_DB_URL not set"** → Add to `.env`
-- **"Rate limit exceeded"** → Wait or reduce frequency
-- **"Database connection failed"** → Run `make setup-db`
-- **"No memories found"** → Check `stats()` to verify data exists
+This applies all SQL files in `schema/` in lexical order.

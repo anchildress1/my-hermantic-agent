@@ -34,6 +34,8 @@ OPENAI_API_KEY=sk-your-key-here
 
 # Optional (for semantic memory):
 MEMORY_DB_URL=postgresql://user:pass@host:port/db?sslmode=require
+LANGMEM_MODEL_PROVIDER=ollama
+# LANGMEM_MODEL defaults to current chat model if omitted
 ```
 
 You can also point the agent to a private template file by setting `TEMPLATE_CONFIG` in your `.env`:
@@ -75,7 +77,7 @@ If you want semantic memory features:
 make setup-db
 
 # Verify it works
-uv run python -c "from src.agent.memory import MemoryStore; print(MemoryStore().stats())"
+uv run python -c "from src.services.memory.vector_store import MemoryStore; print(MemoryStore().stats())"
 ```
 
 ______________________________________________________________________
@@ -100,10 +102,8 @@ ______________________________________________________________________
 
 ### Memory (if database configured)
 
-- `/remember <text>` - Store a memory
-- `/recall <query>` - Search memories
-- `/stats` - Show memory statistics
-- `/contexts` - List all contexts
+- Ask naturally ("remember that ...") to trigger automatic memory writes
+- `/audit` - Show memory audit trail
 
 ______________________________________________________________________
 
@@ -117,20 +117,10 @@ ______________________________________________________________________
 
 🤖 Assistant: Got it. Python for backend - solid choice...
 
-💬 You: /remember I prefer Python over JavaScript for backend work
-Memory type (preference/fact/task/insight):
-  Type: preference
-Context (e.g., work, personal, project-name):
-  Context: coding
-✓ Memory stored with ID 1
+💬 You: Remember that I prefer Python over JavaScript for backend work
 
-💬 You: /recall programming language preferences
-
-🔍 Found 1 relevant memories:
-
-  [1] PREFERENCE | coding
-      I prefer Python over JavaScript for backend work
-      Similarity: 0.923 | Accessed: 1 times
+🤖 Assistant: Noted.
+🧠 Auto-memory stored: 1
 
 💬 You: quit
 💾 Memory saved to data/memory.json

@@ -25,17 +25,12 @@ class OllamaService:
                 logger.error(
                     f"Model '{self.model}' not found. Available: {available_models}"
                 )
-                print(f"❌ Model '{self.model}' not found")
-                print(f"   Available models: {', '.join(available_models)}")
-                print(f"   Run: ollama pull {self.model}")
                 return False
 
             logger.info(f"Ollama connection verified, model '{self.model}' available")
             return True
         except Exception as e:
             logger.error(f"Failed to connect to Ollama: {e}")
-            print(f"❌ Failed to connect to Ollama: {e}")
-            print("   Make sure Ollama is running (ollama serve)")
             return False
 
     def chat(

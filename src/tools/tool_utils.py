@@ -1,10 +1,67 @@
 import inspect
 import json
 import re
-from typing import List, Dict, Any, Callable
+from json import JSONDecodeError
+from typing import Any, Callable
 
 
-def get_function_schema(func: Callable) -> Dict[str, Any]:
+def _parse_json_object(raw_value: str) -> dict[str, Any] | None:
+    """Parse JSON and return object payloads only."""
+    parsed_value = json.loads(raw_value)
+    if isinstance(parsed_value, dict):
+        return parsed_value
+    return None
+
+
+def _parse_google_arg_descriptions(docstring: str) -> dict[str, str]:
+    """Extract Google-style arg descriptions from a docstring."""
+    arg_descriptions: dict[str, str] = {}
+    if "Args:" not in docstring:
+        return arg_descriptions
+
+    args_section = docstring.split("Args:")[1].split("Returns:")[0]
+    for line in args_section.split("\n"):
+        stripped_line = line.strip()
+        if ":" not in stripped_line:
+            continue
+        name, description = stripped_line.split(":", 1)
+        arg_descriptions[name.strip()] = description.strip()
+
+    return arg_descriptions
+
+
+def _resolve_call_arguments(raw_arguments: Any) -> dict[str, Any] | None:
+    """Normalize tool-call arguments from dict or JSON string."""
+    if isinstance(raw_arguments, dict):
+        return raw_arguments
+
+    if isinstance(raw_arguments, str):
+        return _parse_json_object(raw_arguments)
+
+    return None
+
+
+def _normalize_tool_call(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize tool call payloads across Hermes/OpenAI formats."""
+    if "name" in data and "arguments" in data and isinstance(data["name"], str):
+        arguments = _resolve_call_arguments(data["arguments"])
+        if arguments is None:
+            return None
+        return {"name": data["name"], "arguments": arguments}
+
+    function_block = data.get("function")
+    if not isinstance(function_block, dict):
+        return None
+
+    function_name = function_block.get("name")
+    arguments = _resolve_call_arguments(function_block.get("arguments"))
+    if not isinstance(function_name, str) or arguments is None:
+        return None
+
+    return {"name": function_name, "arguments": arguments}
+
+
+def get_function_schema(func: Callable) -> dict[str, Any]:
     """
     Generate OpenAI-compatible tool JSON schema from a Python function.
     Assumes Google-style docstrings and type hints.
@@ -18,14 +75,7 @@ def get_function_schema(func: Callable) -> Dict[str, Any]:
     # Simple regex to parse Google-style args
     # Args:
     #     name: description
-    arg_descriptions = {}
-    if "Args:" in doc:
-        args_section = doc.split("Args:")[1].split("Returns:")[0]
-        for line in args_section.split("\n"):
-            line = line.strip()
-            if ":" in line:
-                name, desc = line.split(":", 1)
-                arg_descriptions[name.strip()] = desc.strip()
+    arg_descriptions = _parse_google_arg_descriptions(doc)
 
     parameters = {"type": "object", "properties": {}, "required": []}
 
@@ -61,14 +111,14 @@ def get_function_schema(func: Callable) -> Dict[str, Any]:
     }
 
 
-def format_tools_xml(tools: List[Callable]) -> str:
+def format_tools_xml(tools: list[Callable]) -> str:
     """Format tools list into Hermes XML system message addition."""
     schemas = [get_function_schema(t) for t in tools]
     tools_json = [json.dumps(s) for s in schemas]
     return "<tools>\n" + "\n".join(tools_json) + "\n</tools>"
 
 
-def parse_tool_calls(content: str) -> List[Dict[str, Any]]:
+def parse_tool_calls(content: str) -> list[dict[str, Any]]:
     """
     Parse <tool_call>...</tool_call> from response.
     Returns list of dicts: {"name": str, "arguments": dict}
@@ -76,29 +126,16 @@ def parse_tool_calls(content: str) -> List[Dict[str, Any]]:
     pattern = r"<tool_call>(.*?)</tool_call>"
     matches = re.findall(pattern, content, re.DOTALL)
 
-    calls = []
+    calls: list[dict[str, Any]] = []
     for match in matches:
         try:
-            # The content inside <tool_call> is assumed to be JSON like:
-            # {"name": "func", "arguments": {...}}
-            # OR {"type": "function", "function": {"name":..., "arguments":...}}
-            # Hermes usually outputs: {"name": "func_name", "arguments": { ... }}
-            # Let's try to parse it.
-            data = json.loads(match)
-
-            # Normalize to structure: {"name": str, "arguments": dict}
-            if "name" in data and "arguments" in data:
-                calls.append(data)
-            elif "function" in data:  # OpenAI format inside tool_call?
-                calls.append(
-                    {
-                        "name": data["function"]["name"],
-                        "arguments": json.loads(data["function"]["arguments"])
-                        if isinstance(data["function"]["arguments"], str)
-                        else data["function"]["arguments"],
-                    }
-                )
-        except json.JSONDecodeError:
+            raw_data = _parse_json_object(match)
+            if raw_data is None:
+                continue
+            normalized = _normalize_tool_call(raw_data)
+            if normalized:
+                calls.append(normalized)
+        except JSONDecodeError:
             continue
 
     return calls

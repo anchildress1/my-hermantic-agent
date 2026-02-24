@@ -67,6 +67,10 @@ def test_remember_operational_error(monkeypatch):
     store._get_connection = raise_op
     res = store.remember("ok", "fact", "ctx")
     assert res is None
+    last_error = store.get_last_error()
+    assert last_error is not None
+    assert last_error["operation"] == "remember"
+    assert "conn fail" in last_error["error"]
 
 
 def test_remember_fetchone_none_rolls_back(monkeypatch):
