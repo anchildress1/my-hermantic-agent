@@ -115,37 +115,27 @@ class LangMemExtractor:
 
         return None
 
-    def extract(self, messages: List[Dict[str, Any]]) -> List[MemoryCandidate]:
-        """Extract memory candidates from message list.
-
-        Args:
-            messages: Chat messages with role/content.
-
-        Returns:
-            Deduplicated memory candidates limited by max_memories_per_turn.
-        """
-        normalized = self._normalize_messages(messages)
-        if not normalized:
-            return []
-
-        try:
-            raw_result = self._manager.invoke({"messages": normalized, "existing": []})
-        except Exception as e:
-            logger.error(f"LangMem extraction failed: {e}")
-            return []
-
+    @staticmethod
+    def _coerce_raw_items(raw_result: Any) -> List[Any]:
+        """Normalize manager output into a flat list of candidate payloads."""
         if raw_result is None:
             return []
 
         if isinstance(raw_result, list):
-            raw_items = raw_result
-        elif isinstance(raw_result, dict):
-            raw_items = raw_result.get("memories") or raw_result.get("results") or []
-            if not raw_items:
-                raw_items = [raw_result]
-        else:
-            raw_items = [raw_result]
+            return raw_result
 
+        if isinstance(raw_result, dict):
+            extracted = raw_result.get("memories") or raw_result.get("results")
+            if extracted:
+                if isinstance(extracted, list):
+                    return extracted
+                return [extracted]
+            return [raw_result]
+
+        return [raw_result]
+
+    def _dedupe_candidates(self, raw_items: List[Any]) -> List[MemoryCandidate]:
+        """Coerce, normalize, and deduplicate extracted memory candidates."""
         dedupe: set[tuple[str, str, str]] = set()
         extracted: List[MemoryCandidate] = []
         for item in raw_items:
@@ -170,3 +160,25 @@ class LangMemExtractor:
                 break
 
         return extracted
+
+    def extract(self, messages: List[Dict[str, Any]]) -> List[MemoryCandidate]:
+        """Extract memory candidates from message list.
+
+        Args:
+            messages: Chat messages with role/content.
+
+        Returns:
+            Deduplicated memory candidates limited by max_memories_per_turn.
+        """
+        normalized = self._normalize_messages(messages)
+        if not normalized:
+            return []
+
+        try:
+            raw_result = self._manager.invoke({"messages": normalized, "existing": []})
+        except Exception as e:
+            logger.error(f"LangMem extraction failed: {e}")
+            return []
+
+        raw_items = self._coerce_raw_items(raw_result)
+        return self._dedupe_candidates(raw_items)

@@ -84,6 +84,159 @@ class AutoMemoryWriter:
         ).strip()
         return stripped or user_message.strip()
 
+    def _extract_candidates(
+        self, messages: List[dict[str, str]], user_message: str, explicit_remember: bool
+    ) -> List[MemoryCandidate]:
+        """Extract memory candidates and apply explicit-intent fallback."""
+        candidates = self.extractor.extract(messages)
+        if explicit_remember and not candidates:
+            return [
+                MemoryCandidate(
+                    memory_text=self._fallback_memory_text(user_message),
+                    type="fact",
+                    tag="chat",
+                    importance=self.EXPLICIT_REMEMBER_IMPORTANCE,
+                    confidence=self.EXPLICIT_REMEMBER_CONFIDENCE,
+                )
+            ]
+        return candidates
+
+    def _apply_explicit_remember_boost(self, candidate: MemoryCandidate) -> None:
+        """Raise candidate priority when user explicitly asks to remember."""
+        candidate.importance = max(
+            candidate.importance, self.EXPLICIT_REMEMBER_IMPORTANCE
+        )
+        candidate.confidence = max(
+            candidate.confidence, self.EXPLICIT_REMEMBER_CONFIDENCE
+        )
+
+    def _record_auto_remember_event(
+        self,
+        *,
+        status: str,
+        details: dict[str, object],
+        memory_id: int | None = None,
+    ) -> None:
+        """Record an auto-memory lifecycle event."""
+        self.memory_store.record_event(
+            operation="auto_remember",
+            status=status,
+            memory_id=memory_id,
+            details=details,
+        )
+
+    def _record_failure(
+        self,
+        *,
+        result: AutoMemoryResult,
+        candidate: MemoryCandidate,
+        action: str,
+        explicit_remember: bool,
+        default_error: str,
+    ) -> None:
+        """Capture and emit a failed auto-memory write operation."""
+        error_payload = self.memory_store.get_last_error() or {}
+        error_text = str(error_payload.get("error", default_error))
+        result.failures.append(
+            AutoMemoryFailure(
+                memory_text=candidate.memory_text,
+                type=candidate.type,
+                tag=candidate.tag,
+                error=error_text,
+            )
+        )
+        self._record_auto_remember_event(
+            status=MemoryStore.EVENT_ERROR,
+            details={
+                "memory_text": candidate.memory_text[:200],
+                "type": candidate.type,
+                "tag": candidate.tag,
+                "action": action,
+                "error": error_text,
+                "explicit_remember": explicit_remember,
+            },
+        )
+
+    def _handle_duplicate_candidate(
+        self,
+        *,
+        result: AutoMemoryResult,
+        candidate: MemoryCandidate,
+        explicit_remember: bool,
+    ) -> None:
+        """Revive an existing memory when an exact candidate already exists."""
+        revived = self.memory_store.revive_exact_memory(
+            memory_text=candidate.memory_text,
+            type=candidate.type,
+            context=candidate.tag,
+        )
+        if revived:
+            memory_id = int(revived["id"])
+            self._record_auto_remember_event(
+                status=MemoryStore.EVENT_SUCCESS,
+                memory_id=memory_id,
+                details={
+                    "memory_id": memory_id,
+                    "type": candidate.type,
+                    "tag": candidate.tag,
+                    "new_importance": revived.get("importance"),
+                    "access_count": revived.get("access_count"),
+                    "action": "revived_duplicate",
+                    "explicit_remember": explicit_remember,
+                },
+            )
+            result.revived_ids.append(memory_id)
+            return
+
+        self._record_failure(
+            result=result,
+            candidate=candidate,
+            action="revive_failed",
+            explicit_remember=explicit_remember,
+            default_error="Failed to revive existing memory",
+        )
+
+    def _handle_new_candidate(
+        self,
+        *,
+        result: AutoMemoryResult,
+        candidate: MemoryCandidate,
+        source: str,
+        explicit_remember: bool,
+    ) -> None:
+        """Insert a new memory candidate and record outcome."""
+        memory_id = self.memory_store.remember(
+            memory_text=candidate.memory_text,
+            type=candidate.type,
+            context=candidate.tag,
+            importance=candidate.importance,
+            confidence=candidate.confidence,
+            source=source,
+        )
+        if memory_id:
+            self._record_auto_remember_event(
+                status=MemoryStore.EVENT_SUCCESS,
+                memory_id=memory_id,
+                details={
+                    "memory_id": memory_id,
+                    "type": candidate.type,
+                    "tag": candidate.tag,
+                    "importance": candidate.importance,
+                    "confidence": candidate.confidence,
+                    "explicit_remember": explicit_remember,
+                },
+            )
+            result.inserted_ids.append(memory_id)
+            return
+
+        self._record_failure(
+            result=result,
+            candidate=candidate,
+            action="store_failed",
+            explicit_remember=explicit_remember,
+            default_error="Failed to store memory",
+        )
+
     def process_turn(self, user_message: str, assistant_message: str) -> List[int]:
         """Extract and store memories for a chat turn.
 
@@ -101,18 +254,11 @@ class AutoMemoryWriter:
         ]
 
         explicit_remember = self._is_explicit_remember_intent(user_message)
-        candidates = self.extractor.extract(messages)
-
-        if explicit_remember and not candidates:
-            candidates = [
-                MemoryCandidate(
-                    memory_text=self._fallback_memory_text(user_message),
-                    type="fact",
-                    tag="chat",
-                    importance=self.EXPLICIT_REMEMBER_IMPORTANCE,
-                    confidence=self.EXPLICIT_REMEMBER_CONFIDENCE,
-                )
-            ]
+        candidates = self._extract_candidates(
+            messages=messages,
+            user_message=user_message,
+            explicit_remember=explicit_remember,
+        )
 
         if not candidates:
             self.last_result = result
@@ -124,111 +270,26 @@ class AutoMemoryWriter:
 
         for candidate in candidates:
             if explicit_remember:
-                candidate.importance = max(
-                    candidate.importance, self.EXPLICIT_REMEMBER_IMPORTANCE
-                )
-                candidate.confidence = max(
-                    candidate.confidence, self.EXPLICIT_REMEMBER_CONFIDENCE
-                )
+                self._apply_explicit_remember_boost(candidate)
 
             if self.memory_store.memory_exists(
                 memory_text=candidate.memory_text,
                 type=candidate.type,
                 context=candidate.tag,
             ):
-                revived = self.memory_store.revive_exact_memory(
-                    memory_text=candidate.memory_text,
-                    type=candidate.type,
-                    context=candidate.tag,
+                self._handle_duplicate_candidate(
+                    result=result,
+                    candidate=candidate,
+                    explicit_remember=explicit_remember,
                 )
-                if revived:
-                    memory_id = int(revived["id"])
-                    self.memory_store.record_event(
-                        operation="auto_remember",
-                        status=MemoryStore.EVENT_SUCCESS,
-                        memory_id=memory_id,
-                        details={
-                            "memory_id": memory_id,
-                            "type": candidate.type,
-                            "tag": candidate.tag,
-                            "new_importance": revived.get("importance"),
-                            "access_count": revived.get("access_count"),
-                            "action": "revived_duplicate",
-                            "explicit_remember": explicit_remember,
-                        },
-                    )
-                    result.revived_ids.append(memory_id)
-                else:
-                    error_payload = self.memory_store.get_last_error() or {}
-                    error_text = str(
-                        error_payload.get("error", "Failed to revive existing memory")
-                    )
-                    failure = AutoMemoryFailure(
-                        memory_text=candidate.memory_text,
-                        type=candidate.type,
-                        tag=candidate.tag,
-                        error=error_text,
-                    )
-                    result.failures.append(failure)
-                    self.memory_store.record_event(
-                        operation="auto_remember",
-                        status=MemoryStore.EVENT_ERROR,
-                        details={
-                            "memory_text": candidate.memory_text[:200],
-                            "type": candidate.type,
-                            "tag": candidate.tag,
-                            "action": "revive_failed",
-                            "error": error_text,
-                            "explicit_remember": explicit_remember,
-                        },
-                    )
                 continue
 
-            memory_id = self.memory_store.remember(
-                memory_text=candidate.memory_text,
-                type=candidate.type,
-                context=candidate.tag,
-                importance=candidate.importance,
-                confidence=candidate.confidence,
+            self._handle_new_candidate(
+                result=result,
+                candidate=candidate,
                 source=source,
+                explicit_remember=explicit_remember,
             )
-            if memory_id:
-                self.memory_store.record_event(
-                    operation="auto_remember",
-                    status=MemoryStore.EVENT_SUCCESS,
-                    memory_id=memory_id,
-                    details={
-                        "memory_id": memory_id,
-                        "type": candidate.type,
-                        "tag": candidate.tag,
-                        "importance": candidate.importance,
-                        "confidence": candidate.confidence,
-                        "explicit_remember": explicit_remember,
-                    },
-                )
-                result.inserted_ids.append(memory_id)
-            else:
-                error_payload = self.memory_store.get_last_error() or {}
-                error_text = str(error_payload.get("error", "Failed to store memory"))
-                failure = AutoMemoryFailure(
-                    memory_text=candidate.memory_text,
-                    type=candidate.type,
-                    tag=candidate.tag,
-                    error=error_text,
-                )
-                result.failures.append(failure)
-                self.memory_store.record_event(
-                    operation="auto_remember",
-                    status=MemoryStore.EVENT_ERROR,
-                    details={
-                        "memory_text": candidate.memory_text[:200],
-                        "type": candidate.type,
-                        "tag": candidate.tag,
-                        "action": "store_failed",
-                        "error": error_text,
-                        "explicit_remember": explicit_remember,
-                    },
-                )
 
         self.last_result = result
         return result.all_ids

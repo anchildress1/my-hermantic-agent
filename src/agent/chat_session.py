@@ -461,21 +461,23 @@ class ChatSession:
         # Persist each turn so abrupt termination loses less context.
         save_chat_history(self.messages, self.context_file)
 
-    def _handle_response(self) -> tuple[str, bool]:
-        """Handle LLM streaming response."""
-        # If using XML tools, we don't pass 'tools' to Ollama API to avoid double-handling
-        # or confusing models that perform better with manual XML instructions.
-        ollama_tools = None if self.use_xml_tools else (self.tools or None)
+    def _resolve_ollama_tools(self) -> Optional[List[Callable[..., str]]]:
+        """Resolve tool payload for Ollama requests."""
+        if self.use_xml_tools:
+            return None
+        return self.tools or None
 
+    def _stream_assistant_response(
+        self, ollama_tools: Optional[List[Callable[..., str]]]
+    ) -> tuple[str, str, List[Any]]:
+        """Stream assistant output and collect response metadata."""
         stream = self.llm_service.chat(self.messages, tools=ollama_tools, stream=True)
 
         full_response = ""
         thinking = ""
-        tool_calls_list = []
-
+        tool_calls: List[Any] = []
         for chunk in stream:
             msg = chunk.message
-
             content = msg.content or ""
             chunk_thinking = msg.thinking or ""
             chunk_tools = msg.tool_calls or []
@@ -488,30 +490,61 @@ class ChatSession:
                 full_response += content
 
             if chunk_tools:
-                tool_calls_list.extend(chunk_tools)
+                tool_calls.extend(chunk_tools)
 
         print()
+        return full_response, thinking, tool_calls
 
-        assistant_msg = {"role": "assistant", "content": full_response}
+    @staticmethod
+    def _build_assistant_message(
+        full_response: str,
+        thinking: str,
+        tool_calls: List[Any],
+    ) -> Dict[str, Any]:
+        """Construct assistant message payload for chat history."""
+        assistant_msg: Dict[str, Any] = {"role": "assistant", "content": full_response}
         if thinking:
             assistant_msg["thinking"] = thinking
-        if tool_calls_list:
-            assistant_msg["tool_calls"] = tool_calls_list
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+        return assistant_msg
 
-        self.messages.append(assistant_msg)
-
+    def _process_response_tool_calls(
+        self, tool_calls: List[Any], full_response: str
+    ) -> bool:
+        """Handle native and XML tool calls found in a response."""
         memory_tool_called = False
+        if tool_calls:
+            memory_tool_called = self._handle_tool_calls(tool_calls)
 
-        # Check for native tool calls
-        if tool_calls_list:
-            memory_tool_called = self._handle_tool_calls(tool_calls_list)
-
-        # Check for manual XML tool calls if enabled
         if self.use_xml_tools:
             xml_tool_calls = parse_tool_calls(full_response)
             if xml_tool_calls:
-                xml_memory_tool_called = self._handle_xml_tool_calls(xml_tool_calls)
-                memory_tool_called = memory_tool_called or xml_memory_tool_called
+                memory_tool_called = (
+                    self._handle_xml_tool_calls(xml_tool_calls) or memory_tool_called
+                )
+
+        return memory_tool_called
+
+    def _handle_response(self) -> tuple[str, bool]:
+        """Handle LLM streaming response."""
+        # If using XML tools, we don't pass 'tools' to Ollama API to avoid double-handling
+        # or confusing models that perform better with manual XML instructions.
+        ollama_tools = self._resolve_ollama_tools()
+        full_response, thinking, tool_calls = self._stream_assistant_response(
+            ollama_tools=ollama_tools
+        )
+        self.messages.append(
+            self._build_assistant_message(
+                full_response=full_response,
+                thinking=thinking,
+                tool_calls=tool_calls,
+            )
+        )
+        memory_tool_called = self._process_response_tool_calls(
+            tool_calls=tool_calls,
+            full_response=full_response,
+        )
         return full_response, memory_tool_called
 
     def _handle_xml_tool_calls(self, tool_calls: List[Dict]) -> bool:

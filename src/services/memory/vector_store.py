@@ -1303,80 +1303,21 @@ class MemoryStore:
         try:
             conn = self._get_connection()
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    """
-                    UPDATE hermes.memories
-                    SET deleted_at = NOW()
-                    WHERE id = %s AND deleted_at IS NULL
-                    RETURNING id, memory_text, type, tag, deleted_at
-                    """,
-                    (memory_id,),
+                tombstoned_row = self._tombstone_memory_row(
+                    cur=cur, memory_id=memory_id
                 )
-                tombstoned_row = self._as_dict_row(cur.fetchone())
-                conn.commit()
                 deleted = tombstoned_row is not None
+                conn.commit()
 
-                existing_row: Optional[Dict] = None
+                existing_row = None
                 if not deleted:
-                    cur.execute(
-                        """
-                        SELECT id, memory_text, type, tag, deleted_at
-                        FROM hermes.memories
-                        WHERE id = %s
-                        """,
-                        (memory_id,),
-                    )
-                    existing_row = self._as_dict_row(cur.fetchone())
+                    existing_row = self._fetch_memory_row(cur=cur, memory_id=memory_id)
 
-                if deleted:
-                    logger.info(f"Soft-deleted memory {memory_id}")
-                    event_details = {
-                        "memory_id": memory_id,
-                        "deleted": True,
-                        "mode": "soft_delete",
-                        "action": "tombstone_created",
-                        "reconciliation": "delete",
-                        "memory_preview": self._preview(
-                            tombstoned_row.get("memory_text")
-                            if tombstoned_row
-                            else None
-                        ),
-                        "type": tombstoned_row.get("type") if tombstoned_row else None,
-                        "context": tombstoned_row.get("tag")
-                        if tombstoned_row
-                        else None,
-                        "deleted_at": tombstoned_row.get("deleted_at")
-                        if tombstoned_row
-                        else None,
-                    }
-                    event_memory_id = memory_id
-                else:
-                    if existing_row and existing_row.get("deleted_at"):
-                        logger.info(f"Memory {memory_id} is already tombstoned")
-                        event_details = {
-                            "memory_id": memory_id,
-                            "deleted": False,
-                            "mode": "soft_delete",
-                            "action": "already_tombstoned",
-                            "reconciliation": "delete",
-                            "memory_preview": self._preview(
-                                existing_row.get("memory_text")
-                            ),
-                            "type": existing_row.get("type"),
-                            "context": existing_row.get("tag"),
-                            "deleted_at": existing_row.get("deleted_at"),
-                        }
-                        event_memory_id = memory_id
-                    else:
-                        logger.warning(f"Memory {memory_id} not found")
-                        event_details = {
-                            "memory_id": memory_id,
-                            "deleted": False,
-                            "mode": "soft_delete",
-                            "action": "not_found",
-                            "reconciliation": "delete",
-                        }
-                        event_memory_id = None
+                event_memory_id, event_details = self._build_forget_event_details(
+                    memory_id=memory_id,
+                    tombstoned_row=tombstoned_row,
+                    existing_row=existing_row,
+                )
                 self._record_event(
                     operation="forget",
                     status=self.EVENT_SUCCESS,
@@ -1417,6 +1358,84 @@ class MemoryStore:
         finally:
             if conn:
                 self._return_connection(conn)
+
+    def _tombstone_memory_row(self, cur: Any, memory_id: int) -> Optional[Dict]:
+        """Tombstone a memory row and return the updated payload."""
+        cur.execute(
+            """
+            UPDATE hermes.memories
+            SET deleted_at = NOW()
+            WHERE id = %s AND deleted_at IS NULL
+            RETURNING id, memory_text, type, tag, deleted_at
+            """,
+            (memory_id,),
+        )
+        return self._as_dict_row(cur.fetchone())
+
+    def _fetch_memory_row(self, cur: Any, memory_id: int) -> Optional[Dict]:
+        """Fetch memory row state when tombstoning did not update anything."""
+        cur.execute(
+            """
+            SELECT id, memory_text, type, tag, deleted_at
+            FROM hermes.memories
+            WHERE id = %s
+            """,
+            (memory_id,),
+        )
+        return self._as_dict_row(cur.fetchone())
+
+    def _build_forget_event_details(
+        self,
+        memory_id: int,
+        tombstoned_row: Optional[Dict],
+        existing_row: Optional[Dict],
+    ) -> Tuple[Optional[int], Dict[str, Any]]:
+        """Build event metadata for forget() outcomes."""
+        if tombstoned_row:
+            logger.info(f"Soft-deleted memory {memory_id}")
+            return (
+                memory_id,
+                {
+                    "memory_id": memory_id,
+                    "deleted": True,
+                    "mode": "soft_delete",
+                    "action": "tombstone_created",
+                    "reconciliation": "delete",
+                    "memory_preview": self._preview(tombstoned_row.get("memory_text")),
+                    "type": tombstoned_row.get("type"),
+                    "context": tombstoned_row.get("tag"),
+                    "deleted_at": tombstoned_row.get("deleted_at"),
+                },
+            )
+
+        if existing_row and existing_row.get("deleted_at"):
+            logger.info(f"Memory {memory_id} is already tombstoned")
+            return (
+                memory_id,
+                {
+                    "memory_id": memory_id,
+                    "deleted": False,
+                    "mode": "soft_delete",
+                    "action": "already_tombstoned",
+                    "reconciliation": "delete",
+                    "memory_preview": self._preview(existing_row.get("memory_text")),
+                    "type": existing_row.get("type"),
+                    "context": existing_row.get("tag"),
+                    "deleted_at": existing_row.get("deleted_at"),
+                },
+            )
+
+        logger.warning(f"Memory {memory_id} not found")
+        return (
+            None,
+            {
+                "memory_id": memory_id,
+                "deleted": False,
+                "mode": "soft_delete",
+                "action": "not_found",
+                "reconciliation": "delete",
+            },
+        )
 
     def list_memories(
         self,
