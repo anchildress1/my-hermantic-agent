@@ -200,8 +200,8 @@ def test_merge_exact_memory_success(monkeypatch):
         source="user: prefers Python",
     )
     assert row["id"] == 4
-    assert row["importance"] == 2.1
-    assert row["confidence"] == 0.95
+    assert row["importance"] == pytest.approx(2.1)
+    assert row["confidence"] == pytest.approx(0.95)
 
 
 def test_revive_tombstoned_memory_success(monkeypatch):
@@ -400,7 +400,7 @@ def test_revive_exact_memory_success(monkeypatch):
 
     row = store.revive_exact_memory("User prefers Python", "preference", "coding")
     assert row["id"] == 3
-    assert row["importance"] == 1.8
+    assert row["importance"] == pytest.approx(1.8)
     assert store.get_last_error() is None
 
 

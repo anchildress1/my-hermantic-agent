@@ -2,6 +2,8 @@ import sys
 from types import ModuleType
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.services.memory.auto_writer import AutoMemoryWriter
 from src.services.memory.langmem_extractor import LangMemExtractor, MemoryCandidate
 from src.services.memory.vector_store import MemoryStore
@@ -125,8 +127,8 @@ def test_auto_writer_non_explicit_remember_phrase_not_boosted():
 
     assert ids == [11]
     kwargs = store.remember.call_args.kwargs
-    assert kwargs["importance"] == 1.0
-    assert kwargs["confidence"] == 0.6
+    assert kwargs["importance"] == pytest.approx(1.0)
+    assert kwargs["confidence"] == pytest.approx(0.6)
 
 
 def test_auto_writer_explicit_remember_fallback_when_extractor_empty():
