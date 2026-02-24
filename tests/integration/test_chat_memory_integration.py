@@ -23,7 +23,9 @@ class _FakeMemoryStore:
     def memory_exists(self, **_kwargs) -> bool:
         return False
 
-    def revive_exact_memory(self, **_kwargs):  # pragma: no cover - not hit in these flows
+    def revive_exact_memory(
+        self, **_kwargs
+    ):  # pragma: no cover - not hit in these flows
         return None
 
     def remember(self, **kwargs):
@@ -74,7 +76,9 @@ class _FakeLLMService:
         return True
 
 
-def _make_session(llm_service, memory_store=None, auto_memory_writer=None) -> ChatSession:
+def _make_session(
+    llm_service, memory_store=None, auto_memory_writer=None
+) -> ChatSession:
     return ChatSession(
         config=AgentConfig(
             model="test-model",

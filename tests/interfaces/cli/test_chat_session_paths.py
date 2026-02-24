@@ -86,7 +86,9 @@ def test_sanitize_details_payload_handles_collections_and_passthrough():
 
 def test_cmd_trim_saves_when_trimmed():
     session = _make_session()
-    with patch("src.agent.chat_session.trim_context", return_value=(session.messages, True)):
+    with patch(
+        "src.agent.chat_session.trim_context", return_value=(session.messages, True)
+    ):
         with patch("src.agent.chat_session.save_chat_history") as mock_save:
             session.cmd_trim()
     mock_save.assert_called_once()
@@ -94,7 +96,9 @@ def test_cmd_trim_saves_when_trimmed():
 
 def test_cmd_trim_reports_when_not_trimmed(capsys):
     session = _make_session()
-    with patch("src.agent.chat_session.trim_context", return_value=(session.messages, False)):
+    with patch(
+        "src.agent.chat_session.trim_context", return_value=(session.messages, False)
+    ):
         with patch("src.agent.chat_session.count_message_tokens", return_value=42):
             session.cmd_trim()
     out = capsys.readouterr().out
@@ -224,7 +228,9 @@ def test_handle_tool_calls_executes_memory_tool_and_appends_tool_message():
         )
     )
     mock_tool = MagicMock(return_value="Stored memory #7")
-    with patch("src.agent.chat_session.create_store_memory_tool", return_value=mock_tool):
+    with patch(
+        "src.agent.chat_session.create_store_memory_tool", return_value=mock_tool
+    ):
         called = session._handle_tool_calls([call])
 
     assert called is True
@@ -275,7 +281,9 @@ def test_send_message_skips_auto_writer_when_memory_tool_already_called():
 def test_send_message_logs_auto_writer_exceptions():
     auto_writer = MagicMock()
     auto_writer.process_turn.side_effect = RuntimeError("writer failed")
-    auto_writer.last_result = SimpleNamespace(inserted_ids=[], revived_ids=[], failures=[])
+    auto_writer.last_result = SimpleNamespace(
+        inserted_ids=[], revived_ids=[], failures=[]
+    )
 
     session = _make_session(auto_memory_writer=auto_writer)
     session._handle_response = MagicMock(return_value=("assistant", False))
@@ -288,7 +296,9 @@ def test_send_message_logs_auto_writer_exceptions():
 
 def test_send_message_prints_refreshed_memory_ids(capsys):
     auto_writer = MagicMock()
-    auto_writer.last_result = SimpleNamespace(inserted_ids=[], revived_ids=[12], failures=[])
+    auto_writer.last_result = SimpleNamespace(
+        inserted_ids=[], revived_ids=[12], failures=[]
+    )
 
     session = _make_session(auto_memory_writer=auto_writer)
     session._handle_response = MagicMock(return_value=("assistant", False))
@@ -316,15 +326,21 @@ def test_read_payload_value_handles_dict_and_object():
 
 def test_stream_assistant_response_collects_tool_calls_from_object_chunks():
     mock_llm = MagicMock(spec=OllamaService)
-    tool_call = _ToolCall(function=_ToolFunction(name="store_memory_tool", arguments={}))
+    tool_call = _ToolCall(
+        function=_ToolFunction(name="store_memory_tool", arguments={})
+    )
     mock_llm.chat.return_value = iter(
         [
             _Chunk(_ChunkMessage(content="hello ", thinking="t1", tool_calls=[])),
-            _Chunk(_ChunkMessage(content="world", thinking="t2", tool_calls=[tool_call])),
+            _Chunk(
+                _ChunkMessage(content="world", thinking="t2", tool_calls=[tool_call])
+            ),
         ]
     )
     session = _make_session(llm_service=mock_llm)
-    response, thinking, tool_calls = session._stream_assistant_response(ollama_tools=None)
+    response, thinking, tool_calls = session._stream_assistant_response(
+        ollama_tools=None
+    )
 
     assert response == "hello world"
     assert thinking == "t1t2"
@@ -333,14 +349,18 @@ def test_stream_assistant_response_collects_tool_calls_from_object_chunks():
 
 def test_stream_assistant_response_captures_tool_calls_without_content():
     mock_llm = MagicMock(spec=OllamaService)
-    tool_call = _ToolCall(function=_ToolFunction(name="store_memory_tool", arguments={}))
+    tool_call = _ToolCall(
+        function=_ToolFunction(name="store_memory_tool", arguments={})
+    )
     mock_llm.chat.return_value = iter(
         [
             _Chunk(_ChunkMessage(content="", thinking=None, tool_calls=[tool_call])),
         ]
     )
     session = _make_session(llm_service=mock_llm)
-    response, thinking, tool_calls = session._stream_assistant_response(ollama_tools=None)
+    response, thinking, tool_calls = session._stream_assistant_response(
+        ollama_tools=None
+    )
 
     assert response == ""
     assert thinking == ""
