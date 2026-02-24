@@ -86,7 +86,7 @@ jobs:
           cp coverage/junit-unit.xml coverage/junit.xml
 
       - name: Upload coverage and Sonar test reports
-        if: always()
+        if: ${{ success() }}
         timeout-minutes: 5
         uses: actions/upload-artifact@v6
         with:
