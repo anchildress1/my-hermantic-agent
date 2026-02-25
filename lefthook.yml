@@ -1,11 +1,30 @@
 pre-commit:
+  parallel: false
   commands:
+    lockfiles:
+      run: scripts/hooks/update-lockfiles.sh
     format:
       run: uv run ruff format .
     lint:
       run: uv run ruff check .
     mdformat:
       run: uv run mdformat --check *.md docs/ src/ tests/
+    actionlint:
+      run: scripts/hooks/run-actionlint.sh
+
+pre-push:
+  parallel: false
+  commands:
+    actionlint:
+      files: git ls-files
+      run: scripts/hooks/run-actionlint.sh
+    tests:
+      files: git ls-files
+      run: scripts/hooks/run-tests.sh
+    security:
+      files: git ls-files
+      run: scripts/hooks/run-security-checks.sh
+
 commit-msg:
   commands:
     gitlint:

@@ -1,0 +1,45 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 2
+    rebase-strategy: "disabled"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    reviewers:
+      - "anchildress1"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      workflow-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:15"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 2
+    rebase-strategy: "disabled"
+    labels:
+      - "dependencies"
+      - "python"
+    reviewers:
+      - "anchildress1"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
