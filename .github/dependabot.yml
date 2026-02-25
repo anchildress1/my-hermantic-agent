@@ -12,8 +12,10 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+    reviewers:
+      - "anchildress1"
     commit-message:
-      prefix: "deps"
+      prefix: "chore"
       include: "scope"
     groups:
       workflow-actions:
@@ -32,8 +34,10 @@ updates:
     labels:
       - "dependencies"
       - "python"
+    reviewers:
+      - "anchildress1"
     commit-message:
-      prefix: "deps"
+      prefix: "chore"
       include: "scope"
     groups:
       python-dependencies:

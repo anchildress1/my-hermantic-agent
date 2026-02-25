@@ -53,6 +53,10 @@ jobs:
         timeout-minutes: 4
         run: uv sync --all-extras
 
+      - name: Validate GitHub workflows
+        timeout-minutes: 1
+        run: uv run actionlint -color
+
       - name: Run lint
         timeout-minutes: 2
         run: uv run ruff check .
