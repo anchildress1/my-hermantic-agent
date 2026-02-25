@@ -12,6 +12,13 @@ This document defines the coding standards, architectural patterns, and context 
 - In GitHub Actions workflows, pin all non-`actions/*` actions to a full commit SHA.
 - After each pinned SHA, include an inline comment with the exact upstream version tag (for example `# v7.3.0`).
 
+## Persistent User Requirements
+
+- Apply this rule in every repository owned by this user: any workflow action not starting with `actions/` must be pinned to a full SHA and include the exact upstream version comment immediately after the SHA.
+- Verify GitHub Actions workflow files with `actionlint` in both local hooks and CI.
+- Use `lefthook` for pre-commit and pre-push checks. The full gate set must include lockfile refresh (`npm`/`uv`, constraint-bound), format, lint, unit + integration + e2e + other tests, security scan, and secrets/vulnerability checks.
+- Keep Dependabot enabled and keep `CODEOWNERS` set to `* @anchildress1`.
+
 ## 1. Project Identity
 
 - **Name:** My Hermantic Agent
@@ -80,7 +87,7 @@ When generating code or answering questions:
 1. **Testing:**
    - Focus on highly used, high-priority functionality only.
    - Maintain a minimum of 80% coverage for critical paths.
-   - No integration tests required at this time.
+   - Run unit, integration, e2e, and any additional test suites in pre-push when those suites exist.
 1. **Brevity:** Provide concise explanations. Focus on the code solution.
 1. **Pathing:** Assume the workspace root is the current working directory.
 1. **Documentation:** All documentation in this repository should be written based on AI agent chat functionality, describing chat commands and workflows rather than programmatic APIs.
