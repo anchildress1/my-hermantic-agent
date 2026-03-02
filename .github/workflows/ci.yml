@@ -31,13 +31,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Require SONAR_TOKEN
+      - name: Validate SONAR_TOKEN availability
         timeout-minutes: 1
         run: |
-          if [ -z "${SONAR_TOKEN}" ]; then
-            echo "::error::SONAR_TOKEN secret is required for CI."
-            exit 1
+          if [ -n "${SONAR_TOKEN}" ]; then
+            exit 0
           fi
+
+          if [ "${{ github.actor }}" = "dependabot[bot]" ]; then
+            echo "::notice::SONAR_TOKEN is not available in this Dependabot pull_request context; skipping Sonar steps."
+            exit 0
+          fi
+
+          echo "::error::SONAR_TOKEN secret is required for CI."
+          exit 1
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -105,12 +112,14 @@ jobs:
           if-no-files-found: error
 
       - name: SonarQube Scan
+        if: ${{ env.SONAR_TOKEN != '' }}
         timeout-minutes: 2
         uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9 # v7.0.0
         env:
           SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
 
       - name: SonarQube Quality Gate
+        if: ${{ env.SONAR_TOKEN != '' }}
         timeout-minutes: 2
         uses: SonarSource/sonarqube-quality-gate-action@cf038b0e0cdecfa9e56c198bbb7d21d751d62c3b # v1.2.0
         env:
