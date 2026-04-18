@@ -10,7 +10,9 @@ concurrency:
   group: rp-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-permissions: {}
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
   release-please:
@@ -21,5 +23,5 @@ jobs:
       - name: Release Please
         uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4.4.0
         with:
-          token: ${{ secrets.MY_RELEASE_PLEASE_TOKEN }}
+          token: ${{ github.token }}
           release-type: simple
