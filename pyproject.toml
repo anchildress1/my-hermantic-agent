@@ -5,35 +5,35 @@ description = "🚧 WIP—Tinkering with embeddings, agent orchestration pattern
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "ollama>=0.4.0",
-    "pyyaml>=6.0.1",
-    "psycopg2-binary>=2.9.9",
-    "openai>=1.0.0",
+    "ollama>=0.6.1",
+    "pyyaml>=6.0.3",
+    "psycopg2-binary>=2.9.11",
+    "openai>=2.31.0",
     "langchain",
     "langchain-openai",
     "langchain-ollama",
     "langmem",
-    "python-dotenv>=1.0.0",
-    "msgspec>=0.18.0",
-    "pydantic>=2.12.5",
-    "pydantic-settings>=2.12.0",
+    "python-dotenv>=1.2.2",
+    "msgspec>=0.21.1",
+    "pydantic>=2.13.0",
+    "pydantic-settings>=2.13.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "actionlint-py>=1.7.11.24",
-    "bandit>=1.8.6",
+    "actionlint-py>=1.7.12.24",
+    "bandit>=1.9.4",
     "detect-secrets>=1.5.0",
-    "pytest>=7.0.0",
-    "pytest-mock>=3.12.0",
-    "pytest-cov>=4.1.0",
-    "pip-audit>=2.9.0",
-    "ruff>=0.1.0",
-    "mdformat>=0.7.17",
-    "mdformat-gfm>=0.3.5",
-    "mdformat-frontmatter>=2.0.0",
-    "lefthook>=1.9.4",
-    "gitlint-rai>=0.0.0",
+    "pytest>=9.0.3",
+    "pytest-mock>=3.15.1",
+    "pytest-cov>=7.1.0",
+    "pip-audit>=2.10.0",
+    "ruff>=0.15.10",
+    "mdformat>=1.0.0",
+    "mdformat-gfm>=1.0.0",
+    "mdformat-frontmatter>=2.0.10",
+    "lefthook>=2.1.4",
+    "gitlint-rai>=0.1.6",
 ]
 
 [tool.pytest.ini_options]
